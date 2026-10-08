@@ -1,47 +1,46 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import api, { API_URL, apiErrorMessage } from '../lib/api'
-import StatusTimeline from '../components/StatusTimeline'
-import FloorPlan from '../components/FloorPlan'
+import AppHeader from '../components/AppHeader'
 import ChatPanel from '../components/ChatPanel'
 import ErrorBoundary from '../components/ErrorBoundary'
-import SplatViewer from '../components/SplatViewer'
-
-const PROCESSING = ['UPLOADED', 'EXTRACTING', 'DETECTING']
-
-const STATUS_COLOR = {
-  CREATED: 'bg-slate-500/20 text-slate-300',
-  UPLOADED: 'bg-amber-500/20 text-amber-300',
-  EXTRACTING: 'bg-amber-500/20 text-amber-300',
-  DETECTING: 'bg-purple-500/20 text-purple-300',
-  DONE: 'bg-emerald-500/20 text-emerald-300',
-  FAILED: 'bg-red-500/20 text-red-300',
-}
+import FloorPlan from '../components/FloorPlan'
+import AnalyticsTab from '../components/project/AnalyticsTab'
+import ObjectsTab from '../components/project/ObjectsTab'
+import ProcessingPanel from '../components/project/ProcessingPanel'
+import TitleBlock from '../components/project/TitleBlock'
+import UploadPanel from '../components/project/UploadPanel'
+import ViewerTab from '../components/project/ViewerTab'
+import { Spinner, StatusPill } from '../components/ui'
+import api, { apiErrorMessage } from '../lib/api'
+import { useFileUrl } from '../lib/useFileUrl'
+import { PROCESSING, classSingular, formatDate, friendlyError, splitObjects, totalObjects } from '../lib/format'
+import { downloadReport } from '../lib/report'
 
 const TABS = [
-  { id: 'viewer', label: '3D' },
+  { id: 'viewer', label: '3D viewer' },
   { id: 'objects', label: 'Objects' },
-  { id: 'floor', label: 'Floor Plan' },
+  { id: 'floor', label: 'Floor plan' },
   { id: 'analytics', label: 'Analytics' },
-  { id: 'chat', label: 'Chat' },
+  { id: 'chat', label: 'Assistant' },
 ]
 
 export default function ProjectDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [project, setProject] = useState(null)
-  const [detections, setDetections] = useState(null)
+  const [objects, setObjects] = useState(null) // { detections, meta }
   const [analytics, setAnalytics] = useState(null)
-  const [tab, setTab] = useState('viewer')
+  const [progress, setProgress] = useState(null)
+  const [tab, setTab] = useState('objects')
   const [uploadProgress, setUploadProgress] = useState(null)
   const [splatProgress, setSplatProgress] = useState(null)
-  const [error, setError] = useState('')
-  const [calW, setCalW] = useState('')
-  const [calH, setCalH] = useState('')
+  const [showReplace, setShowReplace] = useState(false)
   const [showHeatmap, setShowHeatmap] = useState(false)
-  const [reportSaving, setReportSaving] = useState(false)
-  const videoInputRef = useRef(null)
-  const splatInputRef = useRef(null)
+  const [reportBusy, setReportBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notFound, setNotFound] = useState(false)
+  const [focus, setFocus] = useState(null)
+  const objectsRef = useRef(null)
 
   const fetchProject = useCallback(async () => {
     try {
@@ -49,37 +48,41 @@ export default function ProjectDetail() {
       setProject(data)
       return data
     } catch {
-      setError('Project not found')
+      setNotFound(true)
       return null
     }
   }, [id])
 
   const fetchData = useCallback(async () => {
-      // Fetch independently: /objects 404s legitimately when a scan produced
-      // no detections, and must not discard the analytics payload.
-      const [objRes, anaRes] = await Promise.allSettled([
-        api.get(`/projects/${id}/objects`),
-        api.get(`/projects/${id}/analytics`),
-      ])
-      if (objRes.status === 'fulfilled') setDetections(objRes.value.data)
-      else setDetections([])
-      if (anaRes.status === 'fulfilled') setAnalytics(anaRes.value.data)
-    }, [id])
+    // Independent requests: /objects 404s legitimately when nothing was detected,
+    // and that must not throw away the analytics.
+    const [obj, ana] = await Promise.allSettled([
+      api.get(`/projects/${id}/objects`),
+      api.get(`/projects/${id}/analytics`),
+    ])
+    setObjects(obj.status === 'fulfilled' ? splitObjects(obj.value.data) : { detections: [], meta: null })
+    if (ana.status === 'fulfilled') setAnalytics(ana.value.data)
+  }, [id])
 
   useEffect(() => {
     fetchProject().then((p) => {
-      if (p && !PROCESSING.includes(p.status)) fetchData()
+      if (p && (!PROCESSING.includes(p.status) || p.status === 'TRAINING_3D')) fetchData()
     })
   }, [fetchProject, fetchData])
 
+  objectsRef.current = objects
+  const status = project?.status
   useEffect(() => {
-    if (!project || !PROCESSING.includes(project.status)) return
+    if (!PROCESSING.includes(status)) return
     const timer = setInterval(async () => {
       try {
         const { data } = await api.get(`/projects/${id}/status`)
-        setProject((prev) => ({ ...prev, status: data.status, error_message: data.error_message }))
+        setProgress(data.progress)
+        setProject((prev) => ({ ...prev, status: data.status, error_message: data.error_message, frame_count: data.frame_count }))
+        if (data.status === 'TRAINING_3D' && data.has_detections && !objectsRef.current) fetchData()
         if (data.status === 'DONE') {
           clearInterval(timer)
+          fetchProject()
           fetchData()
         } else if (data.status === 'FAILED') {
           clearInterval(timer)
@@ -87,468 +90,231 @@ export default function ProjectDetail() {
       } catch {
         clearInterval(timer)
       }
-    }, 3000)
+    }, 2500)
     return () => clearInterval(timer)
-  }, [project?.status, id, fetchData])
+  }, [status, id, fetchData, fetchProject])
+
+  const uploadFile = async (url, file, onProgress) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    await api.post(url, fd, {
+      onUploadProgress: (e) => e.total && onProgress(Math.round((e.loaded / e.total) * 100)),
+    })
+  }
 
   const uploadVideo = async (file) => {
     if (!file) return
     setError('')
     setUploadProgress(0)
-    const fd = new FormData()
-    fd.append('file', file)
     try {
-      await api.post(`/projects/${id}/upload`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (e) => {
-          if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100))
-        },
-      })
-      setUploadProgress(100)
-      fetchProject()
+      await uploadFile(`/projects/${id}/upload`, file, setUploadProgress)
+      setObjects(null)
+      setAnalytics(null)
+      setShowReplace(false)
+      await fetchProject()
     } catch (err) {
-      setError(apiErrorMessage(err, 'Upload failed'))
+      setError(apiErrorMessage(err, 'The upload failed. Check your connection and try again.'))
+    } finally {
       setUploadProgress(null)
     }
   }
 
-  const loadDemoSplat = async () => {
-    try {
-      await api.post(`/projects/${id}/splat/demo`)
-      fetchProject()
-    } catch (err) {
-      setError(apiErrorMessage(err, 'Could not load the demo model'))
-    }
-  }
-
-  const uploadSplat = async (file) => {
+  const attachSplat = async (file) => {
     if (!file) return
     setError('')
     setSplatProgress(0)
-    const fd = new FormData()
-    fd.append('file', file)
     try {
-      await api.post(`/projects/${id}/splat`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (e) => {
-          if (e.total) setSplatProgress(Math.round((e.loaded / e.total) * 100))
-        },
-      })
-      setSplatProgress(100)
-      setTimeout(() => setSplatProgress(null), 800)
-      fetchProject()
+      await uploadFile(`/projects/${id}/splat`, file, setSplatProgress)
+      await fetchProject()
     } catch (err) {
-      setError(apiErrorMessage(err, 'Splat upload failed'))
+      setError(apiErrorMessage(err, 'The 3D file could not be uploaded.'))
+    } finally {
       setSplatProgress(null)
     }
   }
 
-  const recalibrate = async (e) => {
-    e.preventDefault()
-    const w = parseFloat(calW)
-    const h = parseFloat(calH)
-    if (!w || !h || w <= 0 || h <= 0) return
+  const loadDemoSplat = async () => {
+    setError('')
+    try {
+      await api.post(`/projects/${id}/splat/demo`)
+      await fetchProject()
+    } catch (err) {
+      setError(apiErrorMessage(err, 'The demo model is not available on this server.'))
+    }
+  }
+
+  const calibrate = async (width, depth) => {
+    setError('')
     try {
       const { data } = await api.get(`/projects/${id}/analytics`, {
-        params: { room_width_m: w, room_height_m: h },
+        params: { room_width_m: width, ...(depth ? { room_height_m: depth } : {}) },
       })
       setAnalytics(data)
-    } catch {
-      setError('Calibration request failed')
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not apply that size.'))
     }
   }
 
-  const downloadReport = async () => {
-    setReportSaving(true)
+  const makeReport = async () => {
+    setReportBusy(true)
     try {
-      const { jsPDF } = await import('jspdf')
-      const doc = new jsPDF()
-      let y = 18
-      doc.setFontSize(18)
-      doc.text('AI Digital Twin — Analysis Report', 14, y)
-      y += 9
-      doc.setFontSize(11)
-      doc.text(`Project: ${project.name}`, 14, y)
-      y += 6
-      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, y)
-      y += 10
-
-      const dets = detections || []
-      doc.setFontSize(13)
-      doc.text('Detected objects', 14, y)
-      y += 7
-      doc.setFontSize(10)
-      let total = 0
-      for (const d of dets) {
-        total += d.count
-        doc.text(`${d.class}: ${d.count}`, 18, y)
-        y += 6
-      }
-      doc.text(`Total instances: ${total}`, 14, y + 6)
-      y += 14
-
-      if (analytics) {
-        doc.setFontSize(13)
-        doc.text('Analytics', 14, y)
-        y += 7
-        doc.setFontSize(10)
-        const roomCount = analytics.rooms?.count ?? '–'
-        doc.text(`Segmented rooms: ${roomCount}`, 18, y)
-        y += 6
-        if (analytics.area_m2 != null) doc.text(`Estimated area: ${analytics.area_m2} m²`, 18, y)
-        doc.save(`${project.name.replace(/\s+/g, '_')}_report.pdf`)
-      }
+      await downloadReport({ project, detections: objects?.detections ?? [], meta: objects?.meta, analytics })
+    } catch {
+      setError('The PDF could not be created. Try again.')
     } finally {
-      setReportSaving(false)
+      setReportBusy(false)
     }
   }
 
-  if (error && !project) {
+  // 3D pins: every detected object that has a position in the 3D model.
+  const pins = useMemo(
+    () => (objects?.detections ?? []).flatMap((d) =>
+      d.positions.map((p, i) => (p.world ? { id: `${d.class}:${i}`, label: classSingular(d.class), world: p.world } : null)).filter(Boolean),
+    ),
+    [objects],
+  )
+  const showIn3D = (cls, index) => {
+    setFocus({ id: `${cls}:${index}`, nonce: Date.now() })
+    setTab('viewer')
+  }
+
+  const splatName = project?.has_splat ? `model${project.splat_ext}` : null
+  const splatUrl = useFileUrl(id, splatName)
+
+  if (notFound) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
-        <div className="text-center">
-          <p className="mb-4">{error}</p>
-          <button onClick={() => navigate('/dashboard')} className="text-emerald-400 hover:underline">
-            Back to dashboard
-          </button>
+      <div className="min-h-screen">
+        <AppHeader />
+        <div className="mx-auto max-w-md px-6 py-24 text-center">
+          <h1 className="text-3xl font-semibold">Scan not found</h1>
+          <p className="mt-2 text-graphite">It may have been deleted, or it belongs to another account.</p>
+          <button onClick={() => navigate('/dashboard')} className="btn btn-ink mt-6">Back to your scans</button>
         </div>
       </div>
     )
   }
 
   if (!project) {
-    return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-500">Loading…</div>
+    return (
+      <div className="grid min-h-screen place-items-center text-graphite"><Spinner className="h-7 w-7" /></div>
+    )
   }
 
-  const processing = PROCESSING.includes(project.status)
-  const ready = detections != null || project.status === 'DONE'
-  const splatUrl = project.splat_path ? `${API_URL}/splats/${project.splat_path.split(/[\\/]/).pop()}` : null
+  const training = project.status === 'TRAINING_3D'
+  const processing = PROCESSING.includes(project.status) && !(training && objects)
+  const done = project.status === 'DONE' || (training && !!objects)
+  const finished = project.status === 'DONE'
+  const failed = project.status === 'FAILED'
+  const detections = objects?.detections ?? []
+  const needsVideo = !processing && !done
+  const recon = objects?.meta?.reconstruction ?? null
+
+  const stats = [
+    { label: 'Scanned', value: formatDate(project.scan_date, { month: 'short', day: 'numeric', year: 'numeric' }) },
+    { label: 'Frames', value: project.frame_count ?? '–', big: true },
+    { label: 'Objects', value: done && objects ? totalObjects(detections) : '–', big: true },
+    { label: 'Zones', value: done ? analytics?.rooms?.count ?? '–' : '–', big: true },
+    { label: 'Seats', value: done ? analytics?.seating_capacity?.total ?? '–' : '–', big: true },
+    { label: 'Detector', value: done ? (objects?.meta?.backend ?? '–').replace('onnxruntime: ', '') : '–' },
+  ]
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/dashboard')}
-              className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:border-slate-500"
-            >
-              ← Back
-            </button>
-            <h1 className="truncate text-lg font-bold text-white">{project.name}</h1>
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${STATUS_COLOR[project.status] ?? STATUS_COLOR.CREATED}`}>
-              {project.status}
-            </span>
+    <div className="min-h-screen">
+      <AppHeader crumb={project.name} />
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <StatusPill status={project.status} />
+            <h1 className="mt-3 truncate text-4xl font-semibold sm:text-5xl">{project.name}</h1>
           </div>
-          <div className="flex gap-2">
-            {ready && (
-              <button
-                onClick={downloadReport}
-                disabled={reportSaving}
-                className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:border-emerald-500 hover:text-emerald-300 disabled:opacity-50"
-              >
-                {reportSaving ? 'Generating…' : '📄 PDF Report'}
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {finished && project.has_video && (
+              <button className="btn btn-ghost" onClick={() => setShowReplace((v) => !v)}>
+                {showReplace ? 'Cancel' : 'Upload a new video'}
+              </button>
+            )}
+            {finished && objects && (
+              <button className="btn btn-ink" onClick={makeReport} disabled={reportBusy}>
+                {reportBusy ? <><Spinner className="h-4 w-4" /> Creating PDF</> : 'Download PDF report'}
               </button>
             )}
           </div>
         </div>
-      </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        {error && <p className="mb-6 rounded-lg bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
-
-        {/* Video upload */}
-        {!project.video_path && (
-          <div className="mb-6">
-            {uploadProgress == null ? (
-              <button
-                onClick={() => videoInputRef.current?.click()}
-                className="flex w-full flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-slate-700 bg-slate-900 p-10 transition hover:border-emerald-500"
-              >
-                <span className="text-4xl">🎬</span>
-                <span className="text-white">Click to upload the walkthrough video</span>
-                <span className="text-xs text-slate-500">MP4 / MOV / WebM · up to 500 MB</span>
-              </button>
-            ) : (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                <div className="mb-2 flex justify-between text-sm text-slate-300">
-                  <span>Uploading…</span>
-                  <span>{uploadProgress}%</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                  <div
-                    className="h-full bg-emerald-500 transition-all"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
-                </div>
-                {uploadProgress === 100 && (
-                  <p className="mt-3 text-sm text-emerald-400">Uploaded! Extracting frames…</p>
-                )}
-              </div>
-            )}
-            <input
-              ref={videoInputRef}
-              type="file"
-              accept="video/*"
-              className="hidden"
-              onChange={(e) => uploadVideo(e.target.files?.[0])}
-            />
-          </div>
+        {error && (
+          <p role="alert" className="mt-5 rounded-[3px] border border-fail/40 bg-fail-soft px-4 py-2.5 text-sm text-fail">{error}</p>
         )}
 
-        {/* Progress / ready split */}
-        {processing ? (
-          <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
-              <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-              <p className="text-slate-300">Analyzing your space with YOLOv8…</p>
-              <p className="mt-1 text-xs text-slate-500">
-                Frame extraction → object detection → room segmentation
-              </p>
-            </div>
-            <StatusTimeline status={project.status} errorMessage={project.error_message} />
-          </div>
-        ) : ready ? (
-          <>
-            <div className="mb-4 flex gap-2 overflow-x-auto">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                    tab === t.id
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-900 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+        <div className="mt-6"><TitleBlock items={stats} /></div>
 
-            {tab === 'viewer' && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-2" style={{ height: 560 }}>
-                {splatUrl ? (
-                  <ErrorBoundary>
-                    <SplatViewer url={splatUrl} />
-                  </ErrorBoundary>
+        <div className="mt-6">
+          {processing && <ProcessingPanel status={project.status} frameCount={project.frame_count} progress={progress} />}
+
+          {failed && (
+            <div role="alert" className="mb-5 rounded-[3px] border border-fail/40 bg-fail-soft px-5 py-4">
+              <p className="font-display text-xl font-semibold text-fail">This video could not be processed</p>
+              <p className="mt-1 text-ink">{friendlyError(project.error_message)}</p>
+            </div>
+          )}
+
+          {(needsVideo || showReplace) && (
+            <UploadPanel onUpload={uploadVideo} progress={uploadProgress} replacing={done} />
+          )}
+
+          {done && !showReplace && (
+            <>
+              <div role="tablist" aria-label="Scan results" className="mb-5 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-rule-strong [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    role="tab"
+                    id={`tab-${t.id}`}
+                    aria-selected={tab === t.id}
+                    aria-controls={`panel-${t.id}`}
+                    onClick={() => setTab(t.id)}
+                    className={`-mb-px whitespace-nowrap border-b-[3px] px-4 py-3 font-display text-[15px] font-semibold transition ${
+                      tab === t.id ? 'border-flag text-ink' : 'border-transparent text-graphite hover:text-ink'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} key={tab} className="rise">
+                {!objects ? (
+                  <div className="grid h-48 place-items-center text-graphite"><Spinner className="h-6 w-6" /></div>
                 ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                    <span className="text-4xl">🧊</span>
-                    <p className="text-slate-300">
-                      No 3D model attached yet. The Gaussian splat is trained externally
-                      (Google Colab / Luma AI) because this machine has no NVIDIA GPU.
-                    </p>
-                    <p className="text-xs text-slate-500">Attach the exported .ply to unlock the interactive viewer.</p>
-                    {splatProgress == null ? (
-                      <div className="flex gap-3">
-                        <button
-                          onClick={loadDemoSplat}
-                          className="rounded-lg border border-emerald-600 px-5 py-2.5 text-sm font-semibold text-emerald-400 transition hover:bg-emerald-600 hover:text-white"
-                        >
-                          Try a demo model
-                        </button>
-                        <button
-                          onClick={() => splatInputRef.current?.click()}
-                          className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500"
-                        >
-                          Attach .ply / .splat
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="w-64">
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                          <div className="h-full bg-emerald-500 transition-all" style={{ width: `${splatProgress}%` }} />
-                        </div>
-                        <p className="mt-2 text-xs text-slate-500">{splatProgress}%</p>
-                      </div>
+                  <ErrorBoundary title="This tab hit an error">
+                    {tab === 'viewer' && (
+                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={loadDemoSplat} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={recon?.meters_per_unit ? 1 / recon.meters_per_unit : 1} />
                     )}
-                    <input
-                      ref={splatInputRef}
-                      type="file"
-                      accept=".ply,.splat,.spz"
-                      className="hidden"
-                      onChange={(e) => uploadSplat(e.target.files?.[0])}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {tab === 'objects' && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-white">Detected Objects</h2>
-                  <span className="text-sm text-slate-400">
-                    {detections?.reduce((s, d) => s + d.count, 0) ?? 0} instances across{' '}
-                    {analytics?.rooms?.count ?? 0} zone(s)
-                  </span>
-                </div>
-                {detections?.length === 0 ? (
-                  <p className="text-slate-500">No furniture detected above the confidence threshold.</p>
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {detections?.map((d) => (
-                      <div key={d.class} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold capitalize text-slate-200">{d.class}</span>
-                          <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-sm font-bold text-emerald-400">
-                            {d.count}
-                          </span>
+                    {tab === 'objects' && <ObjectsTab detections={detections} meta={objects?.meta} onShow3D={project.has_splat ? showIn3D : null} />}
+                    {tab === 'floor' && (
+                      <section className="sheet p-5">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                          <h2 className="text-2xl font-semibold">Floor plan</h2>
+                          <label className="flex cursor-pointer items-center gap-2 text-sm">
+                            <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="h-4 w-4 accent-flag" />
+                            Show where objects cluster
+                          </label>
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">top confidence {(d.positions[0]?.confidence ?? 0).toFixed(2)}</p>
-                      </div>
-                    ))}
-                  </div>
+                        <FloorPlan analytics={analytics} detections={detections} showHeatmap={showHeatmap} onSelect={project.has_splat ? showIn3D : undefined} />
+                        <p className="mt-4 border-l-2 border-flag pl-3 text-sm text-graphite">
+                          {analytics?.layout
+                            ? 'Objects are placed on the floor in 3D from your video, so distances are real-world estimates. Sizes assume the phone was held at about 1.4 m: enter a measured size on the Analytics tab to correct them. Dashed boxes are zones of nearby objects; the dotted line is where the phone walked.'
+                            : 'This is a schematic. No camera path was found, so positions come from where objects appear in the camera view: the plan shows how things relate to each other, not exact distances. Dashed boxes are zones of nearby objects.'}
+                        </p>
+                      </section>
+                    )}
+                    {tab === 'analytics' && <AnalyticsTab analytics={analytics} detections={detections} onCalibrate={calibrate} />}
+                    {tab === 'chat' && <ChatPanel projectId={id} detections={detections} onShow3D={project.has_splat ? showIn3D : null} />}
+                  </ErrorBoundary>
                 )}
               </div>
-            )}
-
-            {tab === 'floor' && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-white">Floor Plan</h2>
-                  <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-400">
-                    <input
-                      type="checkbox"
-                      checked={showHeatmap}
-                      onChange={(e) => setShowHeatmap(e.target.checked)}
-                      className="accent-emerald-500"
-                    />
-                    Density heatmap
-                  </label>
-                </div>
-                <FloorPlan analytics={analytics} detections={detections} showHeatmap={showHeatmap} />
-                <p className="mt-3 text-xs text-slate-500">
-                  Object floor positions are estimated from the bottom edge of detection boxes in normalized scene
-                  coordinates. Zones (dashed) are segmented with DBSCAN clustering.
-                </p>
-              </div>
-            )}
-
-            {tab === 'analytics' && (
-              <div className="grid gap-6 lg:grid-cols-2">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                  <h2 className="mb-4 text-lg font-semibold text-white">Room Insights</h2>
-                  <dl className="space-y-3">
-                    <div className="flex justify-between">
-                      <dt className="text-slate-400">Zones / rooms</dt>
-                      <dd className="font-semibold text-white">{analytics?.rooms?.count ?? '–'}</dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-slate-400">Total objects</dt>
-                      <dd className="font-semibold text-white">
-                        {detections?.reduce((s, d) => s + d.count, 0) ?? '–'}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-slate-400">Estimated area</dt>
-                      <dd className="font-semibold text-white">
-                        {analytics?.area_m2 != null ? `${analytics.area_m2} m²` : 'Not calibrated'}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-slate-400">Capture backend</dt>
-                      <dd className="font-mono text-xs font-semibold text-emerald-400">
-                        {analytics?.meta?.backend ?? '–'}
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <div className="mt-6 border-t border-slate-800 pt-4">
-                    <h3 className="mb-3 text-sm font-semibold text-white">Calibrate to real size</h3>
-                    <form onSubmit={recalibrate} className="flex items-end gap-2">
-                      <label className="flex-1 text-xs text-slate-500">
-                        Room width (m)
-                        <input
-                          value={calW}
-                          onChange={(e) => setCalW(e.target.value)}
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none focus:border-emerald-500"
-                        />
-                      </label>
-                      <label className="flex-1 text-xs text-slate-500">
-                        Room height (m)
-                        <input
-                          value={calH}
-                          onChange={(e) => setCalH(e.target.value)}
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none focus:border-emerald-500"
-                        />
-                      </label>
-                      <button
-                        type="submit"
-                        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500"
-                      >
-                        Apply
-                      </button>
-                    </form>
-                    <p className="mt-2 text-[11px] text-slate-600">
-                      Area is derived from the bounding box of detected floor positions; real-size inputs improve the
-                      estimate.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                  <h2 className="mb-4 text-lg font-semibold text-white">Occupancy by Object</h2>
-                  {Array.isArray(detections) && detections.length > 0 ? (
-                    <div className="space-y-3">
-                      {detections
-                        .slice()
-                        .sort((a, b) => b.count - a.count)
-                        .map((d) => (
-                          <div key={d.class}>
-                            <div className="mb-1 flex justify-between text-sm">
-                              <span className="capitalize text-slate-300">{d.class}</span>
-                              <span className="text-slate-500">×{d.count}</span>
-                            </div>
-                            <div className="h-2.5 overflow-hidden rounded-full bg-slate-800">
-                              <div
-                                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400"
-                                style={{
-                                  width: `${(d.count / Math.max(1, ...detections.map((x) => x.count))) * 100}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  ) : (
-                    <p className="text-slate-500">No object data.</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {tab === 'chat' && (
-              <div className="h-[560px]">
-                <ChatPanel projectId={id} detections={detections} />
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-10 text-center text-slate-500">
-            <StatusTimeline status={project.status} errorMessage={project.error_message} />
-          </div>
-        )}
-
-        {project.status === 'FAILED' && (
-          <div className="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-center">
-            <p className="text-red-300">The pipeline failed for this video.</p>
-            <p className="mt-1 text-sm text-red-400/80">{project.error_message}</p>
-            <button
-              onClick={() => videoInputRef.current?.click()}
-              className="mt-4 rounded-lg bg-red-500/20 px-5 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/30"
-            >
-              Re-upload video
-            </button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </main>
     </div>
   )

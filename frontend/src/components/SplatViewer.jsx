@@ -1,6 +1,65 @@
 import { useEffect, useRef, useState } from 'react'
+import { Vector3 } from 'three'
 
-export default function SplatViewer({ url, onLoad, onError }) {
+/** Which axis points "up" differs between splat trainers, so the viewer lets the user pick. */
+export const ORIENTATIONS = [
+  { id: 'y-down', label: 'Y down', up: [0, -1, 0] },
+  { id: 'y-up', label: 'Y up', up: [0, 1, 0] },
+  { id: 'z-up', label: 'Z up', up: [0, 0, 1] },
+]
+
+const median = (a) => {
+  const b = Float32Array.from(a).sort()
+  return b[Math.floor(b.length / 2)]
+}
+
+/**
+ * Robust bounds: real scans have floaters far outside the room, so the library's
+ * own centre/radius (mean and max) are pulled way out. Use the median centre and
+ * a percentile radius of a sample of splats instead.
+ */
+function sceneBounds(mesh) {
+  const total = mesh.getSplatCount()
+  const step = Math.max(1, Math.floor(total / 20000))
+  const p = new Vector3()
+  const xs = []; const ys = []; const zs = []
+  for (let i = 0; i < total; i += step) {
+    mesh.getSplatCenter(i, p)
+    xs.push(p.x); ys.push(p.y); zs.push(p.z)
+  }
+  const center = new Vector3(median(xs), median(ys), median(zs))
+  const d = xs.map((x, i) => Math.hypot(x - center.x, ys[i] - center.y, zs[i] - center.z)).sort((a, b) => a - b)
+  return { center, radius: Math.max(d[Math.floor(d.length * 0.8)], 0.25) }
+}
+
+/** Put the camera at a pleasant 3/4 view that fits the room, whatever its size or position. */
+export function frameScene(viewer, upArr, startView) {
+  const mesh = viewer?.getSplatMesh?.()
+  if (!mesh || !viewer.controls) return
+  const { center: c, radius: r } = sceneBounds(mesh)
+  if (startView) {
+    // Stand where the phone stood and look where it looked: the first view is
+    // then as sharp as one of the original video frames.
+    const pos = new Vector3(...startView.position)
+    const fwd = new Vector3(...startView.forward).normalize()
+    viewer.camera.position.copy(pos)
+    viewer.controls.target.copy(pos).addScaledVector(fwd, r * 0.6)
+    viewer.camera.lookAt(viewer.controls.target)
+    viewer.controls.update()
+    return
+  }
+  const up = new Vector3(...upArr).normalize()
+  const helper = Math.abs(up.x) > 0.9 ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0)
+  const side = new Vector3().crossVectors(up, helper).normalize()
+  const side2 = new Vector3().crossVectors(up, side).normalize()
+  // Camera sits inside/near the room, like a person standing in it, looking across.
+  viewer.camera.position.copy(c).addScaledVector(side, r * 0.9).addScaledVector(side2, r * 0.9).addScaledVector(up, r * 0.15)
+  viewer.controls.target.copy(c)
+  viewer.camera.lookAt(c)
+  viewer.controls.update()
+}
+
+export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startView, onLoad, onError }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const [status, setStatus] = useState('loading')
@@ -32,13 +91,14 @@ export default function SplatViewer({ url, onLoad, onError }) {
           // SharedArrayBuffer, so the default `sharedMemoryForWorkers: true`
           // leaves the splat sorter worker broken and nothing ever renders.
           sharedMemoryForWorkers: false,
-          cameraUp: [0, -1, -0.6],
-          initialCameraPosition: [-1, -4, 6],
-          initialCameraLookAt: [1, 4, 0],
+          cameraUp: up,
         })
         viewerRef.current = viewer
 
+        // The signed URL has no usable file extension, so name the format explicitly.
+        const format = ext === '.splat' ? GaussianSplats3D.SceneFormat.Splat : GaussianSplats3D.SceneFormat.Ply
         await viewer.addSplatScene(url, {
+          format,
           splatAlphaRemovalThreshold: 5,
           showLoadingUI: false,
           progressiveLoad: false,
@@ -46,6 +106,7 @@ export default function SplatViewer({ url, onLoad, onError }) {
         if (cancelled) return
 
         viewer.start()
+        frameScene(viewer, up, startView)
         setStatus('ready')
         if (import.meta.env.DEV) window.__splatViewer = viewer
         onLoadRef.current?.(viewer)
@@ -78,24 +139,23 @@ export default function SplatViewer({ url, onLoad, onError }) {
         /* ignore teardown errors */
       }
     }
-  }, [url])
+  }, [url, ext, up, startView])
 
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden">
       {status === 'loading' && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-950 text-slate-400">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-viewport text-[#9db0be]">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-flag border-t-transparent" />
           <span className="text-sm">Loading 3D scene…</span>
         </div>
       )}
 
       {status === 'error' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-950 p-6 text-center">
-          <span className="text-3xl">⚠️</span>
-          <span className="text-sm font-semibold text-slate-200">Could not render the splat file</span>
-          <span className="max-w-md break-words text-xs text-slate-500">{error}</span>
-          <span className="max-w-md text-xs text-slate-600">
-            Supported exports: .splat or .ply from Colab / Luma AI.
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-viewport p-6 text-center">
+                    <span className="font-display text-lg font-semibold text-paper">This 3D file could not be shown</span>
+          <span className="max-w-md break-words text-xs text-[#7e92a2]">{error}</span>
+          <span className="max-w-md text-xs text-[#7e92a2]">
+            Supported files: .splat, .ply or .spz exported from a splat trainer.
           </span>
         </div>
       )}

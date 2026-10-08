@@ -1,22 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../lib/api'
+import { totalObjects } from '../lib/format'
+import { Icon } from './ui'
 
-export default function ChatPanel({ projectId, detections }) {
+const SUGGESTIONS = [
+  'How many chairs are there?',
+  'How big is the room?',
+  'Where is the TV?',
+  'Suggest a better layout',
+]
+
+export default function ChatPanel({ projectId, detections, onShow3D }) {
   const [messages, setMessages] = useState([
-    {
-      role: 'ai',
-      text: `Hi! Ask me anything about your ${detections?.length ?? 0} detected objects — counts, layouts, or what to declutter.`,
-    },
+    { role: 'ai', text: `I can see ${totalObjects(detections)} objects in this scan. Ask me about counts, seating, free space or layout.` },
   ])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [listening, setListening] = useState(false)
-  const recogRef = useRef(null)
-  const bottomRef = useRef(null)
+  const recog = useRef(null)
+  const end = useRef(null)
+  const SR = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, [messages, busy])
 
   const send = async (text) => {
     const q = (text ?? input).trim()
@@ -25,110 +30,83 @@ export default function ChatPanel({ projectId, detections }) {
     setInput('')
     setBusy(true)
     try {
-      const { data } = await api.post(`/projects/${projectId}/ask`, { question: q })
-      setMessages((m) => [...m, { role: 'ai', text: data.answer }])
-    } catch {
-      setMessages((m) => [...m, { role: 'ai', text: 'Sorry, something went wrong. Try again.' }])
+      const history = messages.filter((m, i) => i > 0 && !m.error).slice(-6).map((m) => ({ role: m.role, text: m.text }))
+      const { data } = await api.post(`/projects/${projectId}/ask`, { question: q, history })
+      setMessages((m) => [...m, { role: 'ai', text: data.answer, focus: data.focus }])
+    } catch (err) {
+      const detail = err.response?.data?.detail
+      setMessages((m) => [...m, { role: 'ai', error: true, text: typeof detail === 'string' ? detail : 'I could not reach the server. Try again in a moment.' }])
     } finally {
       setBusy(false)
     }
   }
 
   const toggleVoice = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) return
-    if (listening) {
-      recogRef.current?.stop()
-      return
-    }
+    if (listening) return recog.current?.stop()
     const rec = new SR()
     rec.lang = 'en-US'
     rec.interimResults = false
-    rec.onresult = (e) => setInput(e.results[0][0].transcript)
+    rec.onresult = (e) => { const t = e.results[0][0].transcript; setInput(t); send(t) }
     rec.onend = () => setListening(false)
     rec.onerror = () => setListening(false)
     rec.start()
-    recogRef.current = rec
+    recog.current = rec
     setListening(true)
   }
 
-  const examples = [
-    'How many chairs did you find?',
-    'What is the biggest object?',
-    'Suggest a declutter plan',
-  ]
-
-  const classes = [...new Set((detections || []).map((d) => d.class))]
-
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-slate-800 bg-slate-900">
-      <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold text-white">
-        AI Assistant
-      </div>
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+    <div className="sheet flex h-[min(70vh,600px)] min-h-[420px] flex-col">
+      <div className="flex-1 space-y-4 overflow-y-auto p-5" aria-live="polite">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm ${
+              className={`max-w-[88%] whitespace-pre-wrap px-4 py-2.5 text-[15px] ${
                 m.role === 'user'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-800 text-slate-200'
+                  ? 'rounded-[3px] bg-ink text-paper'
+                  : m.error
+                    ? 'border-l-[3px] border-fail bg-fail-soft text-ink'
+                    : 'border-l-[3px] border-flag bg-white text-ink shadow-[0_1px_0_rgb(14_27_38/0.06)]'
               }`}
             >
               {m.text}
+              {m.focus && onShow3D && (
+                <div className="mt-2.5"><button onClick={() => onShow3D(m.focus.class, m.focus.index)} className="btn btn-ink !px-3 !py-1.5 !text-[13px]">Show in 3D</button></div>
+              )}
             </div>
           </div>
         ))}
         {busy && (
-          <div className="flex justify-start">
-            <div className="rounded-2xl bg-slate-800 px-4 py-2 text-sm text-slate-400">…typing</div>
+          <div className="flex" aria-label="Assistant is typing">
+            <div className="flex gap-1 border-l-[3px] border-flag bg-white px-4 py-3">
+              {[0, 1, 2].map((i) => <span key={i} className="h-1.5 w-1.5 animate-bounce rounded-full bg-graphite" style={{ animationDelay: `${i * 120}ms` }} />)}
+            </div>
           </div>
         )}
-        <div ref={bottomRef} />
+        <div ref={end} />
       </div>
 
       {messages.length < 2 && (
-        <div className="flex flex-wrap gap-2 px-4 pb-2">
-          {examples.map((chip) => (
-            <button
-              key={chip}
-              onClick={() => send(chip)}
-              className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 transition hover:border-emerald-500 hover:text-emerald-300"
-            >
-              {chip}
+        <div className="flex flex-wrap gap-2 px-5 pb-3">
+          {SUGGESTIONS.map((s) => (
+            <button key={s} onClick={() => send(s)} className="rounded-full border border-rule-strong bg-white px-3.5 py-1.5 text-sm transition hover:border-ink">
+              {s}
             </button>
           ))}
         </div>
       )}
 
-      <div className="flex items-center gap-2 border-t border-slate-800 p-3">
-        <button
-          onClick={toggleVoice}
-          title="Voice input"
-          className={`rounded-lg p-2 text-lg transition ${
-            listening ? 'bg-red-500/20 text-red-400' : 'text-slate-400 hover:bg-slate-800'
-          }`}
-        >
-          🎤
-        </button>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send()}
-          placeholder={classes.length ? `Ask about ${classes.slice(0, 3).join(', ')}…` : 'Ask anything…'}
-          className="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-slate-500"
-        />
-        <button
-          onClick={() => send()}
-          disabled={busy}
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-        >
-          Send
-        </button>
-      </div>
-      {!('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window) && (
-        <p className="px-4 pb-2 text-[11px] text-slate-600">Voice input not supported in this browser.</p>
-      )}
+      <form onSubmit={(e) => { e.preventDefault(); send() }} className="flex items-center gap-2 border-t border-rule-strong p-3">
+        {SR && (
+          <button type="button" onClick={toggleVoice} aria-pressed={listening} aria-label={listening ? 'Stop listening' : 'Ask by voice'}
+            className={`grid h-10 w-10 place-items-center rounded-[3px] border transition ${listening ? 'border-flag bg-flag text-ink' : 'border-rule-strong hover:border-ink'}`}>
+            <Icon.mic />
+          </button>
+        )}
+        <label className="sr-only" htmlFor="chat-input">Your question</label>
+        <input id="chat-input" value={input} onChange={(e) => setInput(e.target.value)} placeholder={listening ? 'Listening…' : 'Ask about this space'} className="field" autoComplete="off" />
+        <button type="submit" disabled={busy || !input.trim()} className="btn btn-ink h-10">Ask</button>
+      </form>
     </div>
   )
 }
