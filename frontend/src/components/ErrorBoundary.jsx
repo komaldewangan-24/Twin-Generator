@@ -8,23 +8,16 @@ export default class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('Viewer crashed:', error, info)
+    console.error('UI crashed:', error, info)
   }
 
   render() {
     if (this.state.error) {
       return (
-        <div className="flex h-full min-h-40 w-full flex-col items-center justify-center gap-2 rounded-xl bg-slate-950 p-6 text-center text-slate-400">
-          <span className="text-3xl">⚠️</span>
-          <p className="max-w-md text-sm">
-            The 3D viewer hit an error: <span className="text-red-400">{String(this.state.error.message ?? this.state.error)}</span>
-          </p>
-          <button
-            onClick={() => this.setState({ error: null })}
-            className="mt-2 rounded-lg border border-slate-700 px-4 py-1.5 text-xs text-slate-300 transition hover:border-emerald-500 hover:text-emerald-300"
-          >
-            Retry
-          </button>
+        <div role="alert" className="flex h-full min-h-48 w-full flex-col items-center justify-center gap-2 rounded-[3px] border border-fail/40 bg-fail-soft p-6 text-center text-ink">
+          <p className="font-display text-xl font-semibold">{this.props.title ?? 'This part of the page failed to load'}</p>
+          <p className="max-w-md text-sm text-graphite">{String(this.state.error.message ?? this.state.error)}</p>
+          <button onClick={() => this.setState({ error: null })} className="btn btn-ghost mt-2">Try again</button>
         </div>
       )
     }

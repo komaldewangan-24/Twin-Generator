@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import AuthLayout from '../components/AuthLayout'
+import { Spinner } from '../components/ui'
 import { apiErrorMessage } from '../lib/api'
 import { useAuthStore } from '../stores/authStore'
-
-const inputClass =
-  'w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-2.5 text-white placeholder-slate-500 outline-none focus:border-slate-500'
 
 export default function Signup() {
   const [email, setEmail] = useState('')
@@ -19,75 +18,57 @@ export default function Signup() {
     e.preventDefault()
     setError('')
     if (password !== confirm) {
-      setError('Passwords do not match')
+      setError('The two passwords are different. Type them again.')
       return
     }
     setLoading(true)
     try {
-      await signup(email, password)
+      await signup(email.trim().toLowerCase(), password)
       navigate('/')
     } catch (err) {
-      setError(apiErrorMessage(err, 'Signup failed. Try again.'))
+      setError(apiErrorMessage(err, 'Could not create the account. Check your connection and try again.'))
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl">
-        <h1 className="text-3xl font-bold text-white">Create account</h1>
-        <p className="mt-1 text-slate-400">Start creating your digital twins</p>
-
-        <form className="mt-8 space-y-4" onSubmit={submit}>
-          <input
-            type="email"
-            placeholder="Email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className={inputClass}
-          />
-          <input
-            type="password"
-            placeholder="Password (min 6 chars)"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
-          />
-          <input
-            type="password"
-            placeholder="Confirm password"
-            required
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className={inputClass}
-          />
-
-          {error && (
-            <p className="rounded-lg bg-red-500/10 px-4 py-2 text-sm text-red-400">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-emerald-600 py-2.5 font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-          >
-            {loading ? 'Creating...' : 'Sign up'}
-          </button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-slate-400">
+    <AuthLayout
+      title="Create your account"
+      subtitle="It takes a minute. Your first scan is a video away."
+      footer={
+        <>
           Already have an account?{' '}
-          <Link to="/login" className="font-semibold text-emerald-400 hover:underline">
+          <Link to="/login" className="font-semibold text-ink underline decoration-flag decoration-2 underline-offset-4">
             Sign in
           </Link>
-        </p>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={submit}>
+        <label className="block">
+          <span className="label">Email</span>
+          <input type="email" required autoComplete="email" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} className="field mt-1.5" placeholder="you@business.com" />
+        </label>
+        <label className="block">
+          <span className="label">Password · at least 6 characters</span>
+          <input type="password" required minLength={6} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="field mt-1.5" />
+        </label>
+        <label className="block">
+          <span className="label">Confirm password</span>
+          <input type="password" required autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="field mt-1.5" />
+        </label>
+
+        {error && (
+          <p role="alert" className="rounded-[3px] border border-fail/40 bg-fail-soft px-3.5 py-2.5 text-sm text-fail">
+            {error}
+          </p>
+        )}
+
+        <button type="submit" disabled={loading} className="btn btn-flag w-full py-3">
+          {loading ? <><Spinner className="h-4 w-4" /> Creating account</> : 'Create account'}
+        </button>
+      </form>
+    </AuthLayout>
   )
 }

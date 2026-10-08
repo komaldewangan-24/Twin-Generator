@@ -1,209 +1,265 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import api from '../lib/api'
-import { useAuthStore } from '../stores/authStore'
+import AppHeader from '../components/AppHeader'
+import { ConfirmDialog, Corners, Icon, IconButton, StatusPill } from '../components/ui'
+import api, { apiErrorMessage } from '../lib/api'
+import { useFileUrl } from '../lib/useFileUrl'
+import { PROCESSING, formatDate, friendlyError } from '../lib/format'
 
-const STATUS_STYLE = {
-  CREATED: 'bg-slate-500/20 text-slate-300',
-  EXTRACTING: 'bg-amber-500/20 text-amber-300',
-  TRAINING_3D: 'bg-blue-500/20 text-blue-300',
-  DETECTING: 'bg-purple-500/20 text-purple-300',
-  DONE: 'bg-emerald-500/20 text-emerald-300',
-  FAILED: 'bg-red-500/20 text-red-300',
-}
-
-function Card({ project, onRename, onDelete }) {
-  const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(project.name)
-
-  const saveName = () => {
-    onRename(project.id, name.trim())
-    setEditing(false)
-  }
-
+function Thumb({ project }) {
+  const [broken, setBroken] = useState(false)
+  const signed = useFileUrl(project.id, project.has_preview ? 'preview.jpg' : null)
+  const src = signed && !broken ? signed : null
   return (
-    <div className="group rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg transition hover:border-slate-700">
-      <Link to={`/project/${project.id}`} className="block">
-        <div className="flex items-start justify-between gap-3">
-          {editing ? (
-            <input
-              value={name}
-              autoFocus
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={saveName}
-              onKeyDown={(e) => e.key === 'Enter' && saveName()}
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-lg font-semibold text-white outline-none"
-            />
-          ) : (
-            <h3 className="text-lg font-semibold text-white group-hover:text-emerald-300">{project.name}</h3>
-          )}
-          <div className="flex gap-1" onClick={(e) => e.preventDefault()} onKeyDown={(e) => e.preventDefault()}>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                setEditing(true)
-              }}
-              title="Rename"
-              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white"
-            >
-              ✎
-            </button>
-            <button
-              onClick={(e) => {
-                e.preventDefault()
-                onDelete(project.id)
-              }}
-              title="Delete"
-              className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-500/10 hover:text-red-400"
-            >
-              🗑
-            </button>
-          </div>
+    <div className="relative aspect-[16/10] overflow-hidden border-b border-rule-strong bg-[#dfe6eb]">
+      {src ? (
+        <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} className="h-full w-full object-cover" />
+      ) : (
+        <div
+          className="grid h-full w-full place-items-center text-rule-strong"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(135deg, transparent 0 9px, rgb(163 175 185 / 0.35) 9px 10px)',
+          }}
+        >
+          <svg width="44" height="44" viewBox="0 0 26 26" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" aria-hidden>
+            <path d="M13 2 23 7.5v11L13 24 3 18.5v-11L13 2Z" /><path d="M3 7.5 13 13l10-5.5M13 13v11" />
+          </svg>
         </div>
-
-        <div className="mt-3 flex items-center gap-2">
-          <span
-            className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${STATUS_STYLE[project.status] ?? STATUS_STYLE.CREATED}`}
-          >
-            {project.status}
-          </span>
-          <span className="text-xs text-slate-500">
-            {new Date(project.scan_date).toLocaleDateString(undefined, {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-            })}
-          </span>
-        </div>
-
-        {project.status === 'FAILED' && project.error_message && (
-          <p className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400">
-            {project.error_message}
-          </p>
-        )}
-
-        <p className="mt-4 text-xs font-semibold text-slate-500 transition group-hover:text-emerald-400">
-          Open workspace →
-        </p>
-      </Link>
+      )}
+      <Corners className="text-ink/60" />
     </div>
   )
 }
 
+function Card({ project, onRename, onAskDelete }) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(project.name)
+  const inputRef = useRef(null)
+
+  const commit = () => {
+    setEditing(false)
+    const next = name.trim()
+    if (next && next !== project.name) onRename(project.id, next)
+    else setName(project.name)
+  }
+
+  const failed = project.status === 'FAILED'
+  const busy = PROCESSING.includes(project.status)
+
+  return (
+    <article className="sheet group rise flex flex-col transition-transform hover:-translate-y-0.5">
+      {/* The whole card is one link via this overlay; the controls sit above it. */}
+      {!editing && (
+        <Link to={`/project/${project.id}`} className="absolute inset-0 z-10 rounded-[3px]" aria-label={`Open ${project.name}`} />
+      )}
+      <Thumb project={project} />
+      <div className="absolute left-3 top-3 z-20">
+        <StatusPill status={project.status} className="bg-sheet/95 backdrop-blur" />
+      </div>
+
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <div className="flex items-start justify-between gap-2">
+          {editing ? (
+            <input
+              ref={inputRef}
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit()
+                if (e.key === 'Escape') { setName(project.name); setEditing(false) }
+              }}
+              aria-label="Scan name"
+              className="field relative z-20 py-1.5 font-display text-lg font-semibold"
+            />
+          ) : (
+            <h3 className="min-w-0 truncate text-lg font-semibold">{project.name}</h3>
+          )}
+          <div className="relative z-20 -mr-1.5 flex shrink-0">
+            <IconButton label="Rename scan" onClick={() => setEditing(true)}><Icon.pencil /></IconButton>
+            <IconButton label="Delete scan" onClick={() => onAskDelete(project)} className="hover:!text-fail"><Icon.trash /></IconButton>
+          </div>
+        </div>
+
+        {failed && (
+          <p className="rounded-[3px] border border-fail/30 bg-fail-soft px-2.5 py-1.5 text-[13px] leading-snug text-fail" title={project.error_message ?? ''}>
+            {friendlyError(project.error_message)}
+          </p>
+        )}
+
+        <dl className="mt-auto flex items-center justify-between border-t border-dashed border-rule-strong pt-3">
+          <div>
+            <dt className="label !text-[10px]">Scanned</dt>
+            <dd className="figure text-[13px]">{formatDate(project.scan_date)}</dd>
+          </div>
+          <div className="text-right">
+            <dt className="label !text-[10px]">Frames</dt>
+            <dd className="figure text-[13px]">{project.frame_count ?? (busy ? '…' : '–')}</dd>
+          </div>
+        </dl>
+      </div>
+    </article>
+  )
+}
+
+function Skeleton() {
+  return (
+    <div className="sheet overflow-hidden" aria-hidden>
+      <div className="aspect-[16/10] animate-pulse bg-[#dfe6eb]" />
+      <div className="space-y-3 p-4">
+        <div className="h-5 w-2/3 animate-pulse rounded bg-[#dfe6eb]" />
+        <div className="h-4 w-1/2 animate-pulse rounded bg-[#e9eef1]" />
+      </div>
+    </div>
+  )
+}
+
+const STEPS = [
+  ['Name a scan', 'Give the space a name, like "Main dining room".'],
+  ['Upload a walkthrough', 'A slow 30 to 60 second video, shot on your phone.'],
+  ['Explore the results', 'Objects, floor plan, analytics and an assistant that answers questions.'],
+]
+
 export default function Dashboard() {
-  const [projects, setProjects] = useState([])
+  const [projects, setProjects] = useState(null)
   const [newName, setNewName] = useState('')
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const logout = useAuthStore((s) => s.logout)
+  const [toDelete, setToDelete] = useState(null)
 
   const fetchProjects = useCallback(async () => {
     try {
       const { data } = await api.get('/projects')
       setProjects(data)
       setError('')
-    } catch {
-      setError('Failed to load projects')
-    } finally {
-      setLoading(false)
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not load your scans. Check that the server is running.'))
+      setProjects((p) => p ?? [])
     }
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchProjects()
   }, [fetchProjects])
 
+  // Keep cards live while anything is processing.
+  const anyBusy = projects?.some((p) => PROCESSING.includes(p.status))
+  useEffect(() => {
+    if (!anyBusy) return
+    const t = setInterval(fetchProjects, 4000)
+    return () => clearInterval(t)
+  }, [anyBusy, fetchProjects])
+
   const createProject = async (e) => {
     e.preventDefault()
-    if (!newName.trim()) return
+    const name = newName.trim()
+    if (!name) return
     try {
-      await api.post('/projects', { name: newName.trim() })
+      await api.post('/projects', { name })
       setNewName('')
       fetchProjects()
-    } catch {
-      setError('Failed to create project')
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not create the scan.'))
     }
   }
 
   const renameProject = async (id, name) => {
-    if (!name) return
     try {
       await api.patch(`/projects/${id}`, { name })
       fetchProjects()
-    } catch {
-      setError('Failed to rename project')
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not rename the scan.'))
     }
   }
 
-  const deleteProject = async (id) => {
-    if (!window.confirm('Delete this project permanently?')) return
+  const confirmDelete = async () => {
+    const target = toDelete
+    setToDelete(null)
     try {
-      await api.delete(`/projects/${id}`)
+      await api.delete(`/projects/${target.id}`)
       fetchProjects()
-    } catch {
-      setError('Failed to delete project')
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not delete the scan.'))
     }
   }
+
+  const ready = projects?.filter((p) => p.status === 'DONE').length ?? 0
+  const working = projects?.filter((p) => PROCESSING.includes(p.status)).length ?? 0
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <header className="border-b border-slate-800 bg-slate-900/50">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+    <div className="min-h-screen">
+      <AppHeader />
+      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-xl font-bold text-white">AI Digital Twin Generator</h1>
-            <p className="text-sm text-slate-400">Your scan projects</p>
+            <p className="label">Your scans</p>
+            <h1 className="mt-1 text-4xl font-semibold sm:text-5xl">
+              Scans
+              {projects && <span className="figure ml-3 align-top text-2xl text-graphite">{String(projects.length).padStart(2, '0')}</span>}
+            </h1>
+            {projects?.length > 0 && (
+              <p className="figure mt-2 text-[13px] text-graphite">
+                {ready} ready · {working} processing
+              </p>
+            )}
           </div>
-          <button
-            onClick={logout}
-            className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:border-red-500/50 hover:text-red-400"
-          >
-            Log out
-          </button>
-        </div>
-      </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <form onSubmit={createProject} className="mb-8 flex gap-3">
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="New scan name (e.g. Living Room)"
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2.5 text-white placeholder-slate-500 outline-none focus:border-slate-500"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-emerald-600 px-6 py-2.5 font-semibold text-white transition hover:bg-emerald-500"
-          >
-            New Scan
-          </button>
-        </form>
+          <form onSubmit={createProject} className="flex w-full gap-2 md:max-w-md">
+            <label className="sr-only" htmlFor="new-scan">New scan name</label>
+            <input
+              id="new-scan"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Name a new scan, e.g. Main dining room"
+              maxLength={120}
+              className="field"
+            />
+            <button type="submit" disabled={!newName.trim()} className="btn btn-flag">New scan</button>
+          </form>
+        </div>
 
         {error && (
-          <p className="mb-4 rounded-lg bg-red-500/10 px-4 py-2 text-sm text-red-400">
-            {error}
-          </p>
+          <p role="alert" className="mt-6 rounded-[3px] border border-fail/40 bg-fail-soft px-4 py-2.5 text-sm text-fail">{error}</p>
         )}
 
-        {loading ? (
-          <p className="text-slate-500">Loading projects...</p>
-        ) : projects.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-800 p-12 text-center text-slate-500">
-            No scans yet. Create your first project above.
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((project) => (
-              <Card
-                key={project.id}
-                project={project}
-                onRename={renameProject}
-                onDelete={deleteProject}
-              />
-            ))}
-          </div>
-        )}
+        <section className="mt-8" aria-live="polite">
+          {projects === null ? (
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"><Skeleton /><Skeleton /><Skeleton /></div>
+          ) : projects.length === 0 ? (
+            <div className="sheet px-6 py-12 sm:px-12">
+              <Corners className="text-ink/50" />
+              <h2 className="text-2xl font-semibold">No scans yet</h2>
+              <p className="mt-1 max-w-lg text-graphite">Name your first scan above. Here is how a scan goes:</p>
+              <ol className="mt-8 grid gap-6 sm:grid-cols-3">
+                {STEPS.map(([title, text], i) => (
+                  <li key={title} className="border-t-2 border-ink pt-3">
+                    <span className="figure text-sm text-flag-ink">{i + 1}</span>
+                    <h3 className="mt-1 text-lg font-semibold">{title}</h3>
+                    <p className="mt-1 text-sm text-graphite">{text}</p>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : (
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {projects.map((p) => (
+                <Card key={p.id} project={p} onRename={renameProject} onAskDelete={setToDelete} />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
+
+      <ConfirmDialog
+        open={!!toDelete}
+        title={`Delete "${toDelete?.name ?? ''}"?`}
+        body="The video, extracted frames, results and any 3D model are removed for good."
+        confirmLabel="Delete scan"
+        onConfirm={confirmDelete}
+        onCancel={() => setToDelete(null)}
+      />
     </div>
   )
 }

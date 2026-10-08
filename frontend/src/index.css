@@ -1,1 +1,172 @@
+@import "@fontsource-variable/bricolage-grotesque/wght.css";
+@import "@fontsource-variable/hanken-grotesk/wght.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 @import "tailwindcss";
+
+/*
+ * Design language: a surveyor's drafting table.
+ * Cool "fog" paper, ink-blue linework, one fluorescent survey-flag orange.
+ * Dark panels are instruments (3D viewer); light sheets are drawings (plans).
+ */
+@theme {
+  --font-display: "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-paper: #e9eef1;
+  --color-sheet: #fafbfb;
+  --color-ink: #0e1b26;
+  --color-graphite: #4a5966;
+  --color-rule: #c9d2d9;
+  --color-rule-strong: #a3afb9;
+  --color-flag: #ff5a1f;
+  --color-flag-soft: #ffe4d9;
+  --color-flag-ink: #b23300;
+  --color-viewport: #0b141c;
+  --color-viewport-line: #23323f;
+  --color-go: #17724f;
+  --color-go-soft: #d6efe4;
+  --color-plumb: #1d55b8;
+  --color-plumb-soft: #dbe6fa;
+  --color-fail: #b5232b;
+  --color-fail-soft: #fadfe0;
+
+  --animate-draw: draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  --animate-scan: scan 2.4s ease-in-out infinite alternate;
+  --animate-rise: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  @keyframes draw {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes scan {
+    from { transform: translateY(0); }
+    to { transform: translateY(calc(100% - 2px)); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@layer base {
+  html {
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    /* faint drafting grid, fixed so it reads as the table under the sheets */
+    background-image:
+      linear-gradient(var(--color-rule) 1px, transparent 1px),
+      linear-gradient(90deg, var(--color-rule) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: -1px -1px;
+    background-attachment: fixed;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--color-paper) 90%, transparent);
+    pointer-events: none;
+    z-index: -1;
+  }
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  button, [role="button"], a { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible {
+    outline: 2px solid var(--color-flag);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection { background: var(--color-flag); color: var(--color-ink); }
+}
+
+@layer components {
+  /* small mono caption: the "label" on every drawing */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-graphite);
+  }
+  .figure {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .sheet {
+    position: relative;
+    background: var(--color-sheet);
+    border: 1px solid var(--color-rule-strong);
+    border-radius: 3px;
+    box-shadow: 0 1px 0 rgb(14 27 38 / 0.04), 0 10px 24px -18px rgb(14 27 38 / 0.35);
+  }
+  .field {
+    width: 100%;
+    background: #fff;
+    border: 1px solid var(--color-rule-strong);
+    border-radius: 3px;
+    padding: 0.65rem 0.8rem;
+    color: var(--color-ink);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .field::placeholder { color: #7b8996; }
+  .field:hover { border-color: var(--color-graphite); }
+  .field:focus-visible {
+    outline: none;
+    border-color: var(--color-ink);
+    box-shadow: 0 0 0 3px var(--color-flag-soft);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 3px;
+    padding: 0.6rem 1.05rem;
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 1;
+    border: 1px solid var(--color-ink);
+    transition: transform 0.12s, background-color 0.15s, box-shadow 0.15s;
+    white-space: nowrap;
+  }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: 0.5; }
+  .btn-flag {
+    background: var(--color-flag);
+    color: var(--color-ink);
+    box-shadow: 2px 2px 0 var(--color-ink);
+  }
+  .btn-flag:hover:not(:disabled) { box-shadow: 3px 3px 0 var(--color-ink); transform: translate(-1px, -1px); }
+  .btn-flag:active:not(:disabled) { box-shadow: 0 0 0 var(--color-ink); transform: translate(2px, 2px); }
+  .btn-ink { background: var(--color-ink); color: var(--color-paper); }
+  .btn-ink:hover:not(:disabled) { background: #1d3243; }
+  .btn-ghost { background: transparent; color: var(--color-ink); border-color: var(--color-rule-strong); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--color-ink); background: #fff; }
+  .btn-ghost-dark { background: transparent; color: #dce6ee; border-color: var(--color-viewport-line); }
+  .btn-ghost-dark:hover:not(:disabled) { border-color: #5d7385; background: rgb(255 255 255 / 0.05); }
+  .rise { animation: var(--animate-rise); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
