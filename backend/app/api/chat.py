@@ -11,7 +11,7 @@ from app.utils.security import get_current_user
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-@router.post("/{project_id}/ask", response_model=ChatResponse)
+@router.post("/{project_id}/ask", response_model=ChatResponse, response_model_by_alias=True)
 def ask(
     project_id: str,
     body: ChatRequest,
@@ -23,5 +23,5 @@ def ask(
         raise HTTPException(status_code=404, detail="No detections yet — process a video first")
 
     analytics = analytics_service.build_analytics(project)
-    answer = chat_service.answer(body.question, project, analytics)
-    return ChatResponse(question=body.question, answer=answer)
+    result = chat_service.answer(body.question, project, analytics, [t.model_dump() for t in body.history])
+    return ChatResponse(question=body.question, answer=result["answer"], focus=result["focus"])
