@@ -72,3 +72,37 @@ def test_segment_rooms_is_json_serializable():
 
     for label in result["labels"]:
         assert type(label) is int
+
+
+def test_capacity_tables_only_cap_chairs_not_couches():
+    cap = compute_capacity([
+        {"class": "chair", "count": 16},
+        {"class": "dining table", "count": 4},
+        {"class": "couch", "count": 2},
+    ])
+    assert cap["total"] == 16 + 6
+
+
+def test_capacity_sink_is_not_seating():
+    cap = compute_capacity([
+        {"class": "chair", "count": 3},
+        {"class": "sink", "count": 2},
+    ])
+    assert cap["total"] == 3
+
+
+def test_contact_sheet_handles_short_videos(tmp_path):
+    """Regression: a last row with fewer than 6 tiles crashed OpenCV's vconcat,
+    so any video under ~12 s with a non-multiple-of-6 frame count FAILED."""
+    import cv2
+    import numpy as np
+
+    from app.services.preview import make_contact_sheet
+
+    for n in (1, 5, 7, 20, 47):
+        d = tmp_path / f"f{n}"
+        d.mkdir()
+        for i in range(n):
+            cv2.imwrite(str(d / f"frame_{i:05d}.jpg"), np.full((90, 160, 3), 120, np.uint8))
+        out = make_contact_sheet(str(d), str(tmp_path / f"sheet{n}.jpg"))
+        assert cv2.imread(out) is not None

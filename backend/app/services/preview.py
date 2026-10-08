@@ -22,8 +22,11 @@ def make_contact_sheet(frames_dir: str, out_path: str, cols: int = 6, tile: int 
     if not imgs:
         raise RuntimeError("frames unreadable for preview")
 
-    while len(imgs) < cols:
-        imgs.append(imgs[-1])
+    # Pad with blank tiles so every row has exactly `cols` tiles. hconcat/vconcat
+    # need equal widths, so a short last row used to crash short videos.
+    blank = np.full_like(imgs[0], 24)
+    while len(imgs) % cols:
+        imgs.append(blank)
 
     rows = [cv2.hconcat(imgs[i:i + cols]) for i in range(0, len(imgs), cols)]
     sheet = cv2.vconcat(rows)

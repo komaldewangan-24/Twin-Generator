@@ -21,3 +21,13 @@ def splat_path_for(project_id: str, ext: str = ".ply") -> str:
 
 def preview_path_for(project_id: str) -> str:
     return str(project_dir(project_id) / "preview.jpg")
+
+def work_dir_for(project_id: str) -> str:
+    """Scratch space for SfM and splat training (deleted with the project)."""
+    d = project_dir(project_id) / "recon"
+    d.mkdir(parents=True, exist_ok=True)
+    return str(d)
+
+
+def progress_path_for(project_id: str) -> str:
+    return str(project_dir(project_id) / "progress.json")

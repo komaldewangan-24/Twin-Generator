@@ -96,3 +96,25 @@ def test_full_flow():
             "detections": data["detections"],
             "analytics": analytics,
         }, indent=2, default=str))
+
+def test_file_links_are_private():
+    """Files need a short-lived file token that belongs to the project's owner."""
+    with make_client() as client:
+        a = client.post("/auth/signup", json={"email": "files-a@example.com", "password": "secret123"}).json()["access_token"]
+        b = client.post("/auth/signup", json={"email": "files-b@example.com", "password": "secret123"}).json()["access_token"]
+        ha, hb = {"Authorization": f"Bearer {a}"}, {"Authorization": f"Bearer {b}"}
+        pid = client.post("/projects", json={"name": "Private"}, headers=ha).json()["id"]
+
+        # The old public folders are gone, and the project API no longer exposes server paths.
+        assert client.get(f"/media/{pid}/preview.jpg").status_code == 404
+        assert client.get(f"/splats/{pid}.ply").status_code == 404
+        assert not any("path" in key for key in client.get(f"/projects/{pid}", headers=ha).json())
+
+        token_a = client.post("/files/token", headers=ha).json()["token"]
+        token_b = client.post("/files/token", headers=hb).json()["token"]
+
+        assert client.get(f"/files/{pid}/preview.jpg").status_code == 422               # no token
+        assert client.get(f"/files/{pid}/preview.jpg", params={"t": "junk"}).status_code == 401
+        assert client.get(f"/files/{pid}/preview.jpg", params={"t": a}).status_code == 401   # a login token is not a file token
+        assert client.get(f"/files/{pid}/preview.jpg", params={"t": token_b}).status_code == 404  # someone else's token
+        assert client.get(f"/files/{pid}/preview.jpg", params={"t": token_a}).status_code == 404  # owner, but no preview yet

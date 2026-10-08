@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
@@ -5,30 +6,40 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.project import Project, ProjectStatus
+from app.models.project import PROCESSING_STATUSES, Project, ProjectStatus
 from app.api.projects import _get_project_or_404
 from app.schemas.project import ProjectResponse
 from app.services import storage
-from app.services.pipeline import run_pipeline
+from app.services.pipeline import read_progress, run_pipeline
 from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
-STAGE_ORDER = ["UPLOADED", "EXTRACTING", "DETECTING", "DONE"]
+STAGE_ORDER = ["UPLOADED", "EXTRACTING", "POSES", "DETECTING", "TRAINING_3D", "DONE"]
 
 
 def _save_file(file: UploadFile, dest: str) -> int:
-    """Stream file to disk in chunks (safe for large videos). Returns bytes written."""
+    """Stream file to disk in chunks (safe for large videos). Returns bytes written.
+
+    Writes to a temp file first and only replaces `dest` once the whole file is
+    in, so a rejected or interrupted upload never destroys the previous one.
+    """
+    tmp = f"{dest}.part"
     written = 0
-    with open(dest, "wb") as out:
-        while True:
-            chunk = file.file.read(1024 * 1024)  # 1 MB
-            if not chunk:
-                break
-            written += len(chunk)
-            if written > settings.MAX_UPLOAD_BYTES:
-                raise HTTPException(status_code=413, detail="File exceeds 500 MB limit")
-            out.write(chunk)
+    try:
+        with open(tmp, "wb") as out:
+            while True:
+                chunk = file.file.read(1024 * 1024)  # 1 MB
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > settings.MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail=f"File exceeds the {settings.MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit")
+                out.write(chunk)
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
     return written
 
 
@@ -41,6 +52,8 @@ def upload_video(
     db: Session = Depends(get_db),
 ):
     project = _get_project_or_404(project_id, user_id, db)
+    if project.status in PROCESSING_STATUSES:
+        raise HTTPException(status_code=409, detail="This scan is still processing. Wait for it to finish.")
 
     ext = Path(file.filename or "").suffix.lower()
     if ext not in settings.ALLOWED_VIDEO_EXTENSIONS:
@@ -127,10 +140,9 @@ def get_status(
         "status": project.status.value,
         "error_message": project.error_message,
         "frame_count": project.frame_count,
-        "splat_ready": bool(project.splat_path),
+        "progress": read_progress(project_id) if project.status in PROCESSING_STATUSES else None,
         "has_detections": bool(project.detections_json),
-        "preview_url": f"/media/{project_id}/preview.jpg" if project.preview_path else None,
-        "splat_url": f"/splats/{Path(project.splat_path).name}" if project.splat_path else None,
-        "video_path": project.video_path,
+        "splat_ready": bool(project.splat_path),
+        "has_video": bool(project.video_path),
         "stages": stages,
     }

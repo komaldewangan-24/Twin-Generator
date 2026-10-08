@@ -12,10 +12,21 @@ class ProjectStatus(str, enum.Enum):
     CREATED = "CREATED"
     UPLOADED = "UPLOADED"
     EXTRACTING = "EXTRACTING"
-    TRAINING_3D = "TRAINING_3D"
+    POSES = "POSES"
     DETECTING = "DETECTING"
+    TRAINING_3D = "TRAINING_3D"
     DONE = "DONE"
     FAILED = "FAILED"
+
+
+# Statuses during which a background job is working on the project.
+PROCESSING_STATUSES = (
+    ProjectStatus.UPLOADED,
+    ProjectStatus.EXTRACTING,
+    ProjectStatus.POSES,
+    ProjectStatus.DETECTING,
+    ProjectStatus.TRAINING_3D,
+)
 
 
 class Project(Base):
@@ -36,3 +47,20 @@ class Project(Base):
     detections_json = Column(Text, nullable=True)
 
     user = relationship("User", back_populates="projects")
+
+    # Flags for the API: clients never see server file paths.
+    @property
+    def has_video(self) -> bool:
+        return bool(self.video_path)
+
+    @property
+    def has_preview(self) -> bool:
+        return bool(self.preview_path)
+
+    @property
+    def has_splat(self) -> bool:
+        return bool(self.splat_path)
+
+    @property
+    def splat_ext(self) -> str | None:
+        return "." + self.splat_path.rsplit(".", 1)[-1].lower() if self.splat_path and "." in self.splat_path else None

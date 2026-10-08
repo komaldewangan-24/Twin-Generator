@@ -1,6 +1,10 @@
+import shutil
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.project import Project, ProjectStatus
 from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
@@ -77,5 +81,12 @@ def delete_project(
     db: Session = Depends(get_db),
 ):
     project = _get_project_or_404(project_id, user_id, db)
+    splat = Path(project.splat_path) if project.splat_path else None
     db.delete(project)
     db.commit()
+
+    # Remove the files too (video, frames, preview, trained splat). The shared
+    # demo splat is never deleted.
+    shutil.rmtree(settings.UPLOADS_DIR / project_id, ignore_errors=True)
+    if splat and splat.parent == settings.SPLATS_DIR and splat.name != "demo.splat":
+        splat.unlink(missing_ok=True)

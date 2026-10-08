@@ -20,9 +20,10 @@ class ProjectResponse(BaseModel):
     status: ProjectStatus
     error_message: str | None = None
     scan_date: datetime
-    video_path: str | None = None
     frame_count: int | None = None
-    splat_path: str | None = None
-    preview_path: str | None = None
+    has_video: bool = False
+    has_preview: bool = False
+    has_splat: bool = False
+    splat_ext: str | None = None
 
     model_config = {"from_attributes": True}
