@@ -1,7 +1,23 @@
-import cv2
+"""Object detection over the extracted frames, plus counting and placement.
+
+Two modes:
+  * spatial (default when SfM worked): every sighting is placed on the floor in
+    real 3D, sightings from different frames are merged, and positions are in
+    metres. Counts are numbers of distinct objects seen in at least 2 frames.
+  * view (fallback when no camera poses are available): sightings are merged by
+    their position in the camera view. Counts and positions are rough.
+"""
+
+from __future__ import annotations
+
+import json
 from pathlib import Path
+from typing import Callable
+
+import cv2
 
 from app.core.config import settings
+from app.services import spatial
 
 # Furniture-relevant COCO classes (YOLOv8 pretrained)
 FURNITURE_CLASSES = {
@@ -20,112 +36,141 @@ FURNITURE_CLASSES = {
     74: "clock",
 }
 
-CONF_THRESHOLD = 0.35
-DEDUP_DISTANCE = 0.10
+CONF_THRESHOLD = 0.30   # low on purpose: the 2-frame vote below removes one-off false alarms
+VIEW_DEDUP_DISTANCE = 0.10
+
+Progress = Callable[[str, float, str], None]
 
 
-def _load_backend():
-    """Prefer torch/ultralytics; fall back to ONNX Runtime when torch is broken."""
-    try:
-        from ultralytics import YOLO
+class _Model:
+    def __init__(self, name: str, onnx_path: Path, class_map: dict[int, str], conf: float):
+        from app.services.detector_onnx import ONNXDetector
 
-        model = YOLO(settings.YOLO_MODEL_PATH)
-        return _TorchBackend(model)
-    except Exception:  # noqa: BLE001 - torch DLL issues etc
-        onnx_path = Path(settings.YOLO_ONNX_PATH)
-        if onnx_path.exists():
-            from app.services.detector_onnx import ONNXDetector
+        self.name = name
+        self.detector = ONNXDetector(str(onnx_path))
+        self.class_map = class_map
+        self.conf = conf
 
-            try:
-                return _OnnxBackend(ONNXDetector(str(onnx_path)))
-            except Exception as onnx_error:  # noqa: BLE001
-                raise RuntimeError(f"torch and onnx backends both failed ({onnx_error.__class__.__name__})") from onnx_error
-        kind = "torch unavailable + onnx model missing"
-        raise RuntimeError(
-            f"Detection backend unavailable: {kind}. "
-            "Run: venv\\Scripts\\pip install onnxruntime && download yolov8n.onnx to models/"
-        )
+    def predict(self, image_path: str) -> list[dict]:
+        out = []
+        for d in self.detector.predict(image_path, conf=self.conf, classes=set(self.class_map)):
+            out.append({"cls": self.class_map[d["cls"]], "box": d["box"], "conf": d["conf"]})
+        return out
 
 
-class _TorchBackend:
-    def __init__(self, model):
-        self.model = model
+class Backend:
+    """One or more ONNX detectors run on every frame and pooled."""
 
-    def name(self):
-        return "ultralytics-torch"
+    def __init__(self, models: list[_Model]):
+        self.models = models
 
-    def predict(self, image_path: str):
-        result = self.model.predict(image_path, conf=CONF_THRESHOLD, verbose=False)[0]
-        dets = []
-        for box in result.boxes:
-            cls = int(box.cls[0])
-            if cls not in FURNITURE_CLASSES:
-                continue
-            x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
-            dets.append({"cls": cls, "box": (x1, y1, x2, y2), "conf": float(box.conf[0])})
+    def name(self) -> str:
+        return "onnxruntime: " + " + ".join(m.name for m in self.models)
+
+    def predict(self, image_path: str) -> list[dict]:
+        dets: list[dict] = []
+        for m in self.models:
+            dets.extend(m.predict(image_path))
         return dets
 
 
-class _OnnxBackend:
-    def __init__(self, detector):
-        self.detector = detector
+def _load_backend() -> Backend:
+    models: list[_Model] = []
+    coco = Path(settings.YOLO_ONNX_PATH)
+    if not coco.exists():
+        raise RuntimeError(
+            "The object detector model is missing (backend/models/yolov8s.onnx or yolov8n.onnx). See the README section 'Model weights'."
+        )
+    models.append(_Model(coco.stem, coco, FURNITURE_CLASSES, CONF_THRESHOLD))
 
-    def name(self):
-        return "onnxruntime"
+    # Optional open-vocabulary model (doors, windows, lights...): an ONNX export
+    # plus open_vocab.json = {"names": [...], "conf": 0.25}, produced by
+    # scripts/export_open_vocab.py.
+    extra = coco.parent / "open_vocab.onnx"
+    cfg_file = coco.parent / "open_vocab.json"
+    if extra.exists() and cfg_file.exists():
+        cfg = json.loads(cfg_file.read_text())
+        models.append(_Model("yolo-world", extra, {i: n for i, n in enumerate(cfg["names"])}, float(cfg.get("conf", 0.25))))
+    return Backend(models)
 
-    def predict(self, image_path: str):
-        return self.detector.predict(image_path, conf=CONF_THRESHOLD, classes=set(FURNITURE_CLASSES))
 
+def run_detection(frames_dir: str, recon=None, scene: spatial.Scene | None = None, progress: Progress | None = None) -> dict:
+    """Detect objects in the frames and aggregate them.
 
-def run_detection(frames_dir: str) -> dict:
-    """Run detection over all frames, dedup across frames, aggregate counts."""
+    `recon` and `scene` (from spatial.build_scene) switch on 3D placement.
+    """
     backend = _load_backend()
     frames = sorted(Path(frames_dir).glob("*.jpg"))
     if not frames:
         raise RuntimeError("no frames to run detection on")
 
-    # Normalization reference = largest frame dimensions
-    max_w, max_h = 1280, 720
-    for path in frames:
-        img = cv2.imread(str(path))
-        if img is not None:
-            max_w = max(max_w, img.shape[1])
-            max_h = max(max_h, img.shape[0])
+    spatial_mode = recon is not None and scene is not None
+    by_name = {im.name: im for im in recon.images.values() if im.has_pose} if spatial_mode else {}
+    if spatial_mode:
+        frames = [f for f in frames if f.name in by_name]
 
-    seen: list[dict] = []
+    observations: list[dict] = []   # spatial mode
+    seen: list[dict] = []           # view mode
     processed = 0
-    for path in frames:
-        for det in backend.predict(str(path)):
-            cls_name = FURNITURE_CLASSES[det["cls"]]
-            x1, y1, x2, y2 = det["box"]
-            cx = ((x1 + x2) / 2) / max_w        # horizontal center → x
-            base_y = y2 / max_h                 # bottom edge → floor-plane z proxy
 
-            match = None
-            for obj in seen:
-                if obj["class"] == cls_name and ((obj["x"] - cx) ** 2 + (obj["z"] - base_y) ** 2) ** 0.5 < DEDUP_DISTANCE:
-                    match = obj
-                    break
-            if match:
-                if det["conf"] > match["confidence"]:
-                    match["x"], match["z"], match["confidence"] = cx, base_y, det["conf"]
-            else:
-                seen.append({"class": cls_name, "x": cx, "z": base_y, "confidence": det["conf"]})
+    for i, path in enumerate(frames):
+        img = cv2.imread(str(path))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+        dets = backend.predict(str(path))
+
+        if spatial_mode:
+            image = by_name[path.name]
+            camera = recon.cameras[image.camera_id]
+            for d in dets:
+                spot = spatial.locate(image, camera, recon, scene, d["cls"], d["box"])
+                if spot:
+                    observations.append({"cls": d["cls"], "u": spot[0], "v": spot[1], "conf": d["conf"], "frame": path.name, "world": spot[3].tolist()})
+        else:
+            for d in dets:
+                x1, _, x2, y2 = d["box"]
+                _merge_in_view(seen, d["cls"], ((x1 + x2) / 2) / w, y2 / h, d["conf"])
         processed += 1
+        if progress and i % 5 == 0:
+            progress("detect", (i + 1) / len(frames), f"Looking for objects ({i + 1} of {len(frames)} frames)")
 
     by_class: dict[str, dict] = {}
-    for obj in seen:
-        entry = by_class.setdefault(obj["class"], {"class": obj["class"], "count": 0, "positions": []})
-        entry["count"] += 1
-        entry["positions"].append({
-            "x": round(obj["x"], 4),
-            "z": round(obj["z"], 4),
-            "confidence": round(obj["confidence"], 3),
-        })
-    detections = [by_class[c] for c in sorted(by_class)]
+    if spatial_mode:
+        for o in spatial.merge_observations(observations, scene):
+            entry = by_class.setdefault(o["class"], {"class": o["class"], "count": 0, "positions": []})
+            entry["count"] += 1
+            entry["positions"].append({
+                "x": round(o["x"], 2), "z": round(o["z"], 2),
+                "confidence": round(o["confidence"], 3), "votes": o["votes"], "world": o["world"],
+            })
+    else:
+        for o in seen:
+            entry = by_class.setdefault(o["class"], {"class": o["class"], "count": 0, "positions": []})
+            entry["count"] += 1
+            entry["positions"].append({"x": round(o["x"], 4), "z": round(o["z"], 4), "confidence": round(o["confidence"], 3)})
 
-    return {
-        "calibration": None,
-        "detections": detections,
-        "meta": {"frames_processed": processed, "total_frames": len(frames), "backend": backend.name()},
+    meta = {
+        "frames_processed": processed,
+        "total_frames": len(frames),
+        "backend": backend.name(),
+        "unit": "m" if spatial_mode else "view",
     }
+    calibration = None
+    if spatial_mode:
+        meta["reconstruction"] = scene.to_json()
+        calibration = {
+            "method": scene.scale_method,
+            "meters_per_unit": round(scene.meters_per_unit, 5),
+            "assumed_camera_height_m": spatial.ASSUMED_CAMERA_HEIGHT_M,
+        }
+    return {"calibration": calibration, "detections": [by_class[c] for c in sorted(by_class)], "meta": meta}
+
+
+def _merge_in_view(seen: list[dict], cls: str, cx: float, base_y: float, conf: float) -> None:
+    for obj in seen:
+        if obj["class"] == cls and ((obj["x"] - cx) ** 2 + (obj["z"] - base_y) ** 2) ** 0.5 < VIEW_DEDUP_DISTANCE:
+            if conf > obj["confidence"]:
+                obj["x"], obj["z"], obj["confidence"] = cx, base_y, conf
+            return
+    seen.append({"class": cls, "x": cx, "z": base_y, "confidence": conf})

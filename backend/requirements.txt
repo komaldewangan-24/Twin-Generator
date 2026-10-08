@@ -4,21 +4,27 @@ sqlalchemy==2.0.36
 psycopg[binary]==3.2.3
 alembic==1.14.0
 python-jose[cryptography]==3.3.0
+email-validator==2.3.0   # required by pydantic EmailStr (schemas/auth.py)
 passlib==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.20
 aiofiles==24.1.0
 onnxruntime==1.30.0
 opencv-python-headless==4.10.0.84
+pycolmap==4.2.1          # camera poses (COLMAP). Wheels exist for macOS arm64, Linux, Windows
+imageio-ffmpeg>=0.5      # bundled ffmpeg binary, so no separate FFmpeg install is needed
 # Required by app/services/segment_rooms.py (DBSCAN room clustering).
 scikit-learn==1.9.1
 # Optional detection backend (torch). NOTE: torch/c10.dll is broken on the
 # dev machine (WinError 1114); detector.py auto-falls back to ONNX Runtime
 # + models/yolov8n.onnx, which is the tested, working path.
-ultralytics==8.3.55   # deferred to Phase 5: pulls ~200MB torch; install: venv\Scripts\pip install ultralytics
+# ultralytics is NOT listed: it pins numpy<2 on macOS (conflicts with numpy==2.1.3 below)
+# and pulls ~200 MB of torch. Only needed once, to export the ONNX model:
+#   pip install ultralytics onnx && yolo export model=yolov8n.pt format=onnx
+# then copy yolov8n.onnx to backend/models/. See README.
 numpy==2.1.3
 pillow==11.1.0
 python-dotenv==1.0.1
-google-generativeai==0.8.3
+google-genai>=1,<3        # Gemini chat (optional; needs GEMINI_API_KEY). Replaces the deprecated google-generativeai
 pytest==8.3.4
 httpx==0.28.1

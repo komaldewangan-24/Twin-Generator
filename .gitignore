@@ -62,3 +62,6 @@ Thumbs.db
 *.swp
 *.suo
 *.ntvs*
+
+# ---------------- 3D tooling (downloaded binaries) ----------------
+backend/tools/
