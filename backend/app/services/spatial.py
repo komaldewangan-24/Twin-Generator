@@ -37,12 +37,17 @@ FLOOR_STANDING = {
 # How far apart (metres) two sightings must be to count as different objects.
 MERGE_RADIUS_M = {
     "chair": 0.35, "couch": 0.9, "dining table": 0.7, "bed": 1.0, "potted plant": 0.3,
-    "tv": 0.5, "sink": 0.4, "refrigerator": 0.5, "bench": 0.6, "door": 0.6,
-    "window": 0.7, "light": 0.7, "counter": 0.9, "cabinet": 0.6, "shelf": 0.6,
+    "tv": 0.5, "sink": 0.4, "refrigerator": 0.5, "bench": 0.6, "door": 0.9,
+    "window": 1.2, "light": 0.7, "counter": 0.9, "cabinet": 0.6, "shelf": 0.6,
 }
 DEFAULT_MERGE_RADIUS_M = 0.5
 
 MIN_VOTES = 2  # an object must be seen in at least this many frames
+# The open-vocabulary model is less certain than the standard one (it will call a box on a table a
+# cabinet in a frame or two), so what it finds must stay in view for longer to count.
+MIN_VOTES_BY_CLASS = {
+    "door": 3, "window": 3, "light": 4, "counter": 4, "cabinet": 4, "shelf": 4, "picture": 4, "curtain": 4,
+}
 
 # Classes that rarely appear in an ordinary room and are easily confused with other things
 # (a striped rug looks like a bench, a bean bag like a toilet) must score higher on average.
@@ -360,7 +365,7 @@ def merge_observations(observations: list[dict], scene: Scene) -> list[dict]:
                 best["confs"].append(o["conf"])
                 best["frames"].add(o["frame"])
         for c in clusters:
-            if len(c["frames"]) >= MIN_VOTES and float(np.mean(c["confs"])) >= MIN_CONFIDENCE.get(cls, 0.0):
+            if len(c["frames"]) >= MIN_VOTES_BY_CLASS.get(cls, MIN_VOTES) and float(np.mean(c["confs"])) >= MIN_CONFIDENCE.get(cls, 0.0):
                 objects.append({
                     "class": cls,
                     "x": (c["u"] - u0) * scale,

@@ -43,18 +43,26 @@ Progress = Callable[[str, float, str], None]
 
 
 class _Model:
-    def __init__(self, name: str, onnx_path: Path, class_map: dict[int, str], conf: float):
+    def __init__(self, name: str, onnx_path: Path, class_map: dict[int, str], conf: float, class_conf: dict[str, float] | None = None):
         from app.services.detector_onnx import ONNXDetector
 
         self.name = name
         self.detector = ONNXDetector(str(onnx_path))
         self.class_map = class_map
+        self.class_conf = class_conf or {}
         self.conf = conf
 
     def predict(self, image_path: str) -> list[dict]:
+        # Ask the network for everything above the lowest threshold any class needs, then
+        # apply each class's own threshold. Open-vocabulary models score doors and windows
+        # far lower than furniture (0.06 to 0.15 for a clear door), so one global cut-off
+        # either misses them or lets in junk for every other class.
+        floor = min([self.conf, *self.class_conf.values()])
         out = []
-        for d in self.detector.predict(image_path, conf=self.conf, classes=set(self.class_map)):
-            out.append({"cls": self.class_map[d["cls"]], "box": d["box"], "conf": d["conf"]})
+        for d in self.detector.predict(image_path, conf=floor, classes=set(self.class_map)):
+            name = self.class_map[d["cls"]]
+            if d["conf"] >= self.class_conf.get(name, self.conf):
+                out.append({"cls": name, "box": d["box"], "conf": d["conf"]})
         return out
 
 
@@ -84,13 +92,13 @@ def _load_backend() -> Backend:
     models.append(_Model(coco.stem, coco, FURNITURE_CLASSES, CONF_THRESHOLD))
 
     # Optional open-vocabulary model (doors, windows, lights...): an ONNX export
-    # plus open_vocab.json = {"names": [...], "conf": 0.25}, produced by
+    # plus open_vocab.json = {"names": [...], "conf": 0.25, "class_conf": {"door": 0.05}}, produced by
     # scripts/export_open_vocab.py.
     extra = coco.parent / "open_vocab.onnx"
     cfg_file = coco.parent / "open_vocab.json"
     if extra.exists() and cfg_file.exists():
         cfg = json.loads(cfg_file.read_text())
-        models.append(_Model("yolo-world", extra, {i: n for i, n in enumerate(cfg["names"])}, float(cfg.get("conf", 0.25))))
+        models.append(_Model("yolo-world", extra, {i: n for i, n in enumerate(cfg["names"])}, float(cfg.get("conf", 0.25)), cfg.get("class_conf")))
     return Backend(models)
 
 

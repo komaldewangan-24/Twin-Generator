@@ -427,6 +427,102 @@ function furniture(ctx, cls, cx, cy, w, h, { hover = false, selected = false } =
   ctx.restore()
 }
 
+// Doors and windows are parts of the wall, not furniture on the floor: they are drawn as openings in it.
+const OPENING_WIDTH_M = { door: 0.9, window: 1.2 }
+const SNAP_TO_WALL_M = 1.0   // a door further than this from every wall is shown as a plain marker instead
+
+/** Closest point of the room outline (metres) to (x, z), with the wall's direction and its inward normal. */
+function nearestWall(outline, x, z) {
+  const cx = outline.reduce((s, p) => s + p[0], 0) / outline.length
+  const cz = outline.reduce((s, p) => s + p[1], 0) / outline.length
+  let best = null
+  for (let i = 0; i < outline.length; i++) {
+    const [ax, az] = outline[i]
+    const [bx, bz] = outline[(i + 1) % outline.length]
+    const len = Math.hypot(bx - ax, bz - az)
+    if (len < 1e-6) continue
+    const tx = (bx - ax) / len
+    const tz = (bz - az) / len
+    const along = Math.max(0, Math.min(len, (x - ax) * tx + (z - az) * tz))
+    const px = ax + tx * along
+    const pz = az + tz * along
+    const d = Math.hypot(x - px, z - pz)
+    if (best && d >= best.d) continue
+    let nx = -tz
+    let nz = tx
+    if (nx * (cx - px) + nz * (cz - pz) < 0) { nx = -nx; nz = -nz }
+    best = { d, ax, az, tx, tz, nx, nz, len, along }
+  }
+  return best
+}
+
+/** Where an opening of `width` metres sits on its wall: the centre, kept clear of the corners. */
+function openingOnWall(wall, width) {
+  const half = Math.min(width, wall.len) / 2
+  const s = Math.max(half, Math.min(wall.len - half, wall.along))
+  return { x: wall.ax + wall.tx * s, z: wall.az + wall.tz * s, half }
+}
+
+/** The gap in the wall, then the door leaf with its swing, or the window's glazing lines. */
+function drawOpening(ctx, cls, wall, centre, P, m2px, wallW, { active = false } = {}) {
+  const [cx, cy] = P(centre.x, centre.z)
+  const half = centre.half * m2px
+  const t = [wall.tx, wall.tz]
+  const n = [wall.nx, wall.nz]
+  const a = [cx - t[0] * half, cy - t[1] * half]
+  const b = [cx + t[0] * half, cy + t[1] * half]
+  ctx.save()
+  ctx.lineCap = 'butt'
+  if (active) {
+    ctx.strokeStyle = 'rgba(255,90,31,0.4)'
+    ctx.lineWidth = wallW + 12
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke()
+  }
+  // cut the opening out of the wall
+  ctx.strokeStyle = cls === 'window' ? '#e3f1fa' : '#fffdf9'
+  ctx.lineWidth = wallW + 1.5
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke()
+
+  if (cls === 'window') {
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 1.3
+    ctx.beginPath()
+    for (const k of [-0.5, 0.5]) {
+      ctx.moveTo(a[0] + n[0] * wallW * k, a[1] + n[1] * wallW * k)
+      ctx.lineTo(b[0] + n[0] * wallW * k, b[1] + n[1] * wallW * k)
+    }
+    ctx.stroke()
+    ctx.strokeStyle = '#4f86b5'
+    ctx.lineWidth = 1.8
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke()
+  } else {
+    // jambs, the open leaf at right angles to the wall, and the quarter circle it sweeps
+    ctx.strokeStyle = INK
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    for (const e of [a, b]) {
+      ctx.moveTo(e[0] - n[0] * wallW * 0.5, e[1] - n[1] * wallW * 0.5)
+      ctx.lineTo(e[0] + n[0] * wallW * 0.5, e[1] + n[1] * wallW * 0.5)
+    }
+    ctx.stroke()
+    const leaf = 2 * half
+    const hx = a[0]
+    const hy = a[1]
+    ctx.lineWidth = 2.6
+    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx + n[0] * leaf, hy + n[1] * leaf); ctx.stroke()
+    const open = Math.atan2(n[1], n[0])
+    const shut = Math.atan2(t[1], t[0])
+    let sweep = shut - open
+    while (sweep > Math.PI) sweep -= 2 * Math.PI
+    while (sweep < -Math.PI) sweep += 2 * Math.PI
+    ctx.lineWidth = 1.1
+    ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.arc(hx, hy, leaf, open, shut, sweep < 0); ctx.stroke()
+  }
+  ctx.restore()
+  return { x: cx, y: cy, half }
+}
+
 function polygonArea(poly) {
   let a = 0
   for (let i = 0; i < poly.length; i++) {
@@ -558,9 +654,19 @@ function drawModern(ctx, W, H, {
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke()
   }
 
+  // doors and windows that sit on a wall are drawn with the walls; the rest of the room's contents on the floor
+  const openings = []
+  const onFloor = []
+  for (const p of pts) {
+    const width = OPENING_WIDTH_M[p.cls]
+    const wall = width ? nearestWall(outline, p.x, p.z) : null
+    if (wall && wall.d <= SNAP_TO_WALL_M) openings.push({ p, wall, centre: openingOnWall(wall, width) })
+    else onFloor.push(p)
+  }
+
   // furniture at real size
   const hits = []
-  for (const p of pts) {
+  for (const p of onFloor) {
     const [mw, md] = METERS[p.cls] ?? [0.5, 0.5]
     const w = Math.max(mw * m2px, 20)
     const h = Math.max(md * m2px, p.cls === 'tv' ? 8 : 20)
@@ -573,11 +679,19 @@ function drawModern(ctx, W, H, {
   ctx.restore() // end of the room clip
 
   // walls on top: thick, round-cornered, dark ink
+  const wallW = Math.max(5, Math.min(14, m2px * 0.1))
   tracePath(outline)
   ctx.strokeStyle = INK
-  ctx.lineWidth = Math.max(5, Math.min(14, m2px * 0.1))
+  ctx.lineWidth = wallW
   ctx.lineJoin = 'round'
   ctx.stroke()
+
+  // openings cut into those walls
+  for (const o of openings) {
+    const active = (hover && hover.cls === o.p.cls && hover.idx === o.p.idx) || (selected && selected.cls === o.p.cls && selected.idx === o.p.idx)
+    const at = drawOpening(ctx, o.p.cls, o.wall, o.centre, P, m2px, wallW, { active: !!active })
+    hits.push({ x: at.x, y: at.y, hh: wallW / 2 + 4, r: Math.max(at.half, 14) + 6, cls: o.p.cls, idx: o.p.idx, confidence: o.p.confidence, wx: o.p.x, wz: o.p.z })
+  }
 
   // object names: always on request, otherwise only the one you are pointing at or have selected
   for (const h of hits) {

@@ -41,6 +41,7 @@ backend/storage/*.sqlite3
 
 # ---------------- Model weights (large binaries, rebuild instead) ----------------
 backend/models/*.onnx
+backend/models/open_vocab.json
 backend/models/*.pt
 backend/models/*.pth
 backend/models/*.bin

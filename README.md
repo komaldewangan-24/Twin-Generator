@@ -222,11 +222,23 @@ You can still attach a splat trained elsewhere (Luma, Polycam, KIRI Engine) on t
 
 **Interacting with the model:** orbit, zoom and fullscreen; **Walkthrough** replays the path you filmed; labels float on detected objects; "Show in 3D" in the Objects tab, the floor plan and the assistant flies to an object.
 
+**Measure** (3D viewer, either view): click two points to read the distance in metres. If you know the real length of something you measured (a door frame, a sheet of A4, a tape laid on the floor), press "I know this length" and type it (`2.1`, `210 cm`, `7 ft`). That replaces the 1.4 m camera-height guess for the whole scan: the floor plan, room size, assistant answers and PDF all use it from then on, and it is saved with the scan. "Reset" goes back to the estimate. Measurements are only as good as the picked points: use the two ends of something long and clear, not a tiny object.
+
+**Record** (3D viewer, Photoreal): plays the walkthrough and saves it as a video (MP4 where the browser can, otherwise WebM), with no buttons or labels in the picture. Chrome, Edge and Safari can do it. Press "Stop and save" to keep what was filmed so far.
+
 **Viewer note:** cross-origin isolation headers (`COOP`/`COEP`) are not enabled in the dev server, so the viewer sets `sharedMemoryForWorkers: false`. Without that, the splat sort worker silently fails and the canvas stays blank.
 
 ### Doors, windows and lights (optional)
 
-The COCO model does not know them. `scripts/export_open_vocab.py` exports an open-vocabulary YOLO-World model to ONNX (about 370 MB of one-time downloads; AGPL/GPL licence). If `backend/models/open_vocab.onnx` exists the app uses it automatically.
+The standard model (COCO) knows chairs and TVs but not doors, windows, lights or built-in cupboards. For those, run once:
+
+```bash
+python scripts/setup_detector.py --open-vocab
+```
+
+It exports an open-vocabulary YOLO-World model to ONNX in a temporary environment (about 370 MB of one-time downloads, needs Git, AGPL/GPL licence), and writes `backend/models/open_vocab.onnx` and `open_vocab.json`. The app then uses it next to the standard model, with no other setup. Process a video again, or run `python scripts/reanalyze.py <project-id>` on an existing scan, to see them. `python scripts/doctor.py` says whether it is installed.
+
+Doors and windows are drawn **in the walls** of the floor plan (a door with its swing, a window as glazing). They are far less certain than furniture: the model scores a clear door at 0.06 to 0.15 where a chair scores 0.5, so they have their own thresholds (`CLASS_CONF` in `scripts/export_open_vocab.py`) and must be seen in at least three frames. Expect to find windows more often than doors, and some misses.
 
 ---
 

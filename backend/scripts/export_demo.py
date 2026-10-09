@@ -41,9 +41,9 @@ def main() -> None:
             shutil.copyfile(structure, DEMO_STRUCTURE)
         if p.preview_path and Path(p.preview_path).is_file():
             shutil.copyfile(p.preview_path, DEMO_PREVIEW)
-        DEMO_DATA.write_text(json.dumps(
-            {"name": name, "frame_count": p.frame_count, "scan": json.loads(p.detections_json)}, separators=(",", ":")
-        ))
+        scan = json.loads(p.detections_json)
+        scan.get("meta", {}).pop("user_scale", None)   # a measurement belongs to the person who made it
+        DEMO_DATA.write_text(json.dumps({"name": name, "frame_count": p.frame_count, "scan": scan}, separators=(",", ":")))
     mb = DEMO_SPLAT.stat().st_size / 1e6
     print(f"Wrote {DEMO_DIR} ({mb:.1f} MB model). Commit the folder to share it.")
 

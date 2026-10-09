@@ -157,3 +157,20 @@ def test_chat_answers_counts_and_room_size_together():
     analytics = {"seating_capacity": compute_capacity(det), "rooms": {"count": 1, "details": []}, "layout": layout, "area": {"calibration": None, "unit_area": None}}
     answer = _rule_based_answer("How big is the room and how many chairs?", project, analytics)
     assert "chair: 2" in answer and "4.7" in answer and "3.7" in answer
+
+
+def test_the_assistant_knows_doors_windows_and_lights(monkeypatch):
+    """The open-vocabulary classes are answerable by name, in the singular and the plural."""
+    _configure(monkeypatch)
+    detections = [
+        {"class": "window", "count": 2, "positions": [{"x": 0.3, "z": 1.8, "confidence": 0.1, "world": [1, 2, 3]}, {"x": 2.0, "z": 3.7, "confidence": 0.1}]},
+        {"class": "door", "count": 1, "positions": [{"x": 4.7, "z": 1.0, "confidence": 0.1}]},
+    ]
+    project = SimpleNamespace(detections_json=json.dumps({"detections": detections, "meta": {"unit": "m"}}))
+    analytics = dict(ANALYTICS, layout=dict(ANALYTICS["layout"], scale_factor=2.0))
+
+    counted = chat.answer("How many windows are there?", project, analytics)["answer"]
+    assert "window: 2" in counted
+    where = chat.answer("Where is the door?", project, analytics)
+    assert "9.4 m across" in where["answer"]                 # 4.7 m at the estimate, doubled by the saved scale
+    assert where["focus"] == {"class": "door", "index": 0}

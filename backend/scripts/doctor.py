@@ -100,6 +100,21 @@ def check_detector() -> None:
         report("FAIL", "Object detector model will not load", f"{path}\n{exc.__class__.__name__}: {str(exc)[:160]}")
 
 
+def check_open_vocab() -> None:
+    """Optional: without it the app finds furniture but not doors, windows or lights."""
+    from app.core.config import settings
+
+    base = Path(settings.YOLO_ONNX_PATH).parent
+    if (base / "open_vocab.onnx").exists() and (base / "open_vocab.json").exists():
+        report("OK", "Doors, windows and lights model (open_vocab.onnx)")
+    else:
+        report(
+            "INFO", "Doors and windows are not detected (optional model not installed)",
+            "To add them, with an internet connection:  python scripts/setup_detector.py --open-vocab\n"
+            "(about 370 MB of one-time downloads; it needs Git installed)",
+        )
+
+
 def find_brush() -> str | None:
     from app.services import reconstruct
 
@@ -235,6 +250,7 @@ def main() -> None:
     check_node()
     check_ffmpeg()
     check_detector()
+    check_open_vocab()
     brush = check_brush()
     check_gpu()
     check_env()

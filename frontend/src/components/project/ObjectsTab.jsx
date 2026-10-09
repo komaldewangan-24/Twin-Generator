@@ -85,7 +85,9 @@ export default function ObjectsTab({ detections, meta, onShow3D }) {
           </p>
         )}
         <p className="border-l-2 border-rule-strong pl-3">
-          Doors, windows, counters and lights are not detected unless the optional open-vocabulary model is installed.
+          {/yolo-world/i.test(meta?.backend ?? '')
+            ? 'Doors, windows, lights and cupboards come from an open-vocabulary model. It is less certain than the one for furniture, so expect some misses, especially doors.'
+            : 'Doors, windows, counters and lights are not detected unless the optional open-vocabulary model is installed: python scripts/setup_detector.py --open-vocab'}
         </p>
       </div>
     </div>

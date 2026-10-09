@@ -180,3 +180,37 @@ def test_room_box_is_a_flat_floor_and_a_flat_ceiling_above_it():
     for axis in (scene.e1, scene.e2):
         assert along(floor, axis).min() <= along(cams, axis).min() + 1e-3
         assert along(floor, axis).max() >= along(cams, axis).max() - 1e-3
+
+
+def test_open_vocabulary_classes_must_stay_in_view_longer():
+    """The open-vocabulary model calls a box on a table a cabinet now and then: a couple of frames
+    must not be enough, while a chair (standard model) still needs only two."""
+    rec, _ = make_reconstruction()
+    scene = spatial.build_scene(rec)
+
+    def sightings(cls, frames, u=1.0):
+        return [{"cls": cls, "u": u, "v": 1.0, "conf": 0.6, "frame": f, "world": [0, 0, 0]} for f in frames]
+
+    kept = lambda obs: {o["class"] for o in spatial.merge_observations(obs, scene)}  # noqa: E731
+    assert kept(sightings("chair", "ab")) == {"chair"}
+    assert kept(sightings("cabinet", "abc")) == set()
+    assert kept(sightings("cabinet", "abcd")) == {"cabinet"}
+    assert kept(sightings("door", "abc")) == {"door"}
+    assert kept(sightings("window", "ab")) == set()
+
+
+def test_one_wide_window_seen_from_different_angles_is_one_window():
+    """Estimates of a window's centre scatter by half a metre or more between frames; two sightings
+    a metre apart on the same wall are the same window, not two."""
+    rec, _ = make_reconstruction()
+    scene = spatial.build_scene(rec)
+    u0, v0 = scene.origin_uv
+    per_m = 1 / scene.meters_per_unit
+
+    def sighting(frame, along_m):
+        return {"cls": "window", "u": u0 + along_m * per_m, "v": v0, "conf": 0.5, "frame": frame, "world": [0, 0, 0]}
+
+    near = [sighting(f, a) for f, a in zip("abcd", (1.0, 1.4, 1.8, 2.0))]
+    assert len(spatial.merge_observations(near, scene)) == 1
+    far = near + [sighting(f, 4.5) for f in "efgh"]            # a second window across the room
+    assert len(spatial.merge_observations(far, scene)) == 2

@@ -33,6 +33,9 @@ PROMPTS = {
     "curtain": "curtain",
 }
 CONF = 0.25
+# Doors and windows score far lower than furniture even when they are plainly visible, so they get
+# their own thresholds; everything else uses CONF.
+CLASS_CONF = {"door": 0.05, "window": 0.07}
 MODELS = Path(__file__).resolve().parent.parent / "models"
 
 
@@ -42,7 +45,7 @@ def main() -> None:
     model.set_classes(list(PROMPTS))
     onnx = Path(model.export(format="onnx", imgsz=640, simplify=True))
     shutil.copy(onnx, MODELS / "open_vocab.onnx")
-    (MODELS / "open_vocab.json").write_text(json.dumps({"names": list(PROMPTS.values()), "conf": CONF}, indent=2))
+    (MODELS / "open_vocab.json").write_text(json.dumps({"names": list(PROMPTS.values()), "conf": CONF, "class_conf": CLASS_CONF}, indent=2))
     print("Wrote", MODELS / "open_vocab.onnx")
 
 
