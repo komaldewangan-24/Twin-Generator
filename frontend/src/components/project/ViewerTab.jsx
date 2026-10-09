@@ -1,16 +1,38 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ErrorBoundary from '../ErrorBoundary'
 import SplatViewer, { ORIENTATIONS, frameScene } from '../SplatViewer'
 import StructureView from '../StructureView'
 import Pins from '../Pins'
-import { flyToObject, playTour } from '../../lib/camera'
+import MeasureLayer from '../MeasureLayer'
+import MeasurePanel from './MeasurePanel'
+import { flyToObject, playTour, tourDuration } from '../../lib/camera'
+import { dist, pickSplat } from '../../lib/measure'
+import { canRecord, safeName, saveBlob, startRecording } from '../../lib/record'
 import { Corners, Icon, Spinner } from '../ui'
 
 const btn = 'btn btn-ghost-dark !px-3 !py-2 backdrop-blur'
 
+const clockText = (ms) => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** What the Measure tool needs from the photoreal viewer. */
+const splatSurface = (v) => ({
+  camera: v.camera,
+  canvas: v.renderer.domElement,
+  pick: (x, y) => pickSplat(v, x, y),
+  // the viewer re-centres on every click; while measuring, a click must only place a point
+  pauseClicks() {
+    v.onMouseClick = () => {}
+    return () => { delete v.onMouseClick }
+  },
+})
+
 export default function ViewerTab({
   splatUrl, splatExt, startView, splatProgress, onAttach, onDemo, building, progress, error, up,
   pins = [], focus, tour, unitsPerMeter = 1, structureUrl, recon,
+  scaleMeasured = null, onMeasureCalibrate, onResetScale, name,
 }) {
   const stage = useRef(null)
   const fileInput = useRef(null)
@@ -24,6 +46,14 @@ export default function ViewerTab({
   const [choice, setChoice] = useState(null)       // 'photo' | 'structure' once the user picks
   const [resetKey, setResetKey] = useState(0)      // bumps to re-frame the structure view
   const stopMotion = useRef(() => {})
+  const [measuring, setMeasuring] = useState(false)
+  const [surface, setSurface] = useState(null)        // what the Measure tool clicks on, from whichever viewer shows
+  const [measures, setMeasures] = useState([])        // [{id, a, b}] in the model's own units
+  const [pending, setPending] = useState(null)        // first point of the next measurement
+  const [recording, setRecording] = useState(null)    // {startedAt, total} while the walkthrough is being filmed
+  const [clock, setClock] = useState(0)
+  const [recordError, setRecordError] = useState('')
+  const recorder = useRef(null)
 
   const hasPhoto = !!splatUrl
   const hasStructure = !!structureUrl
@@ -33,18 +63,80 @@ export default function ViewerTab({
   const options = up ? [{ id: 'auto', label: 'Auto', up }, ...ORIENTATIONS] : ORIENTATIONS
   const o = options[orient % options.length]
 
+  const finishRecording = async () => {
+    const r = recorder.current
+    recorder.current = null
+    setRecording(null)
+    if (!r) return
+    try {
+      const blob = await r.stop()
+      if (blob.size) saveBlob(blob, `${safeName(name)}-walkthrough.${r.ext}`)
+    } catch {
+      setRecordError('The video could not be saved. Try again.')
+    }
+  }
+
   const halt = () => {
     stopMotion.current()
     stopMotion.current = () => {}
     setTouring(false)
+    if (recorder.current) finishRecording()          // whatever was filmed so far is still saved
   }
-  useEffect(() => () => stopMotion.current(), [])
+  useEffect(() => () => {
+    stopMotion.current()
+    recorder.current?.stop().catch(() => {})         // leaving the page: drop the recording
+    recorder.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!recording) return undefined
+    const id = setInterval(() => setClock(performance.now() - recording.startedAt), 250)
+    return () => clearInterval(id)
+  }, [recording])
+
+  // Film the walkthrough: play the tour while the 3D view is recorded, then save the video.
+  const startRecord = () => {
+    halt()
+    setRecordError('')
+    try {
+      recorder.current = startRecording(surface.canvas)
+    } catch (err) {
+      return setRecordError(err.message)
+    }
+    setClock(0)
+    setRecording({ startedAt: performance.now(), total: tourDuration(tour) })
+    setTouring(true)
+    stopMotion.current = playTour(viewer.current, tour, unitsPerMeter, () => { setTouring(false); finishRecording() })
+  }
 
   const chooseMode = (next) => {
     halt()
     setReady(false)
+    setSurface(null)
+    setPending(null)
     setChoice(next)
   }
+
+  const canMeasure = !!recon && unitsPerMeter > 0
+  const metersPerUnit = 1 / unitsPerMeter
+  const placePoint = useCallback((p) => {
+    if (!pending) return setPending(p)
+    if (dist(pending, p) * metersPerUnit < 0.02) return          // same spot twice: keep waiting for a real second point
+    setMeasures((m) => [...m, { id: crypto.randomUUID(), a: pending, b: p }])
+    setPending(null)
+  }, [pending, metersPerUnit])
+
+  const stopMeasuring = () => { setMeasuring(false); setPending(null) }
+  useEffect(() => {
+    if (!measuring) return undefined
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      if (pending) setPending(null)
+      else setMeasuring(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [measuring, pending])
 
   // "Show in 3D" from the objects list, floor plan or assistant: fly to that object.
   useEffect(() => {
@@ -82,16 +174,16 @@ export default function ViewerTab({
     return (
       <div
         ref={stage}
-        onPointerDownCapture={(e) => { if (!e.target.closest?.('button')) halt() }}
+        onPointerDownCapture={(e) => { if (!recorder.current && !e.target.closest?.('button')) halt() }}
         className="relative h-[min(72vh,640px)] min-h-[360px] overflow-hidden rounded-[3px] border border-ink bg-viewport"
       >
         {mode === 'photo' && hasPhoto ? (
           <ErrorBoundary title="The 3D viewer hit an error">
-            <SplatViewer url={splatUrl} ext={splatExt} up={o.up} startView={o.id === 'auto' ? startView : undefined} onLoad={(v) => { viewer.current = v; setReady(true) }} />
+            <SplatViewer url={splatUrl} ext={splatExt} up={o.up} startView={o.id === 'auto' ? startView : undefined} onLoad={(v) => { viewer.current = v; setReady(true); setSurface(splatSurface(v)) }} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary title="The 3D structure view hit an error">
-            <StructureView url={structureUrl} recon={recon} pins={pins} showPins={showPins} resetKey={resetKey} />
+            <StructureView url={structureUrl} recon={recon} pins={pins} showPins={showPins} resetKey={resetKey} onSurface={setSurface} />
           </ErrorBoundary>
         )}
         <Corners className="text-paper/40" />
@@ -99,7 +191,44 @@ export default function ViewerTab({
           <Pins viewerRef={viewer} pins={pins} selectedId={selected} onPick={(pin) => { halt(); setSelected(pin.id); stopMotion.current = flyToObject(viewer.current, pin.world, o.up, unitsPerMeter) }} />
         )}
 
-        {hasPhoto && hasStructure && (
+        {canMeasure && (
+          <MeasureLayer
+            surface={surface}
+            active={measuring}
+            items={measures}
+            pending={pending}
+            metersPerUnit={metersPerUnit}
+            estimated={!scaleMeasured}
+            onPick={placePoint}
+          />
+        )}
+        {measuring && (
+          <MeasurePanel
+            items={measures}
+            metersPerUnit={metersPerUnit}
+            estimated={!scaleMeasured}
+            measured={scaleMeasured}
+            hasPending={!!pending}
+            onRemove={(id) => setMeasures((m) => m.filter((x) => x.id !== id))}
+            onClear={() => { setMeasures([]); setPending(null) }}
+            onCalibrate={(item, metres) => onMeasureCalibrate(item.a, item.b, metres)}
+            onReset={onResetScale}
+          />
+        )}
+
+        {recording && <div className="absolute inset-0 z-[15]" aria-hidden />}
+        {recording && (
+          <div className="absolute inset-x-4 top-4 z-20 flex items-center justify-between gap-3 rounded-[3px] border border-fail/60 bg-viewport/90 px-4 py-2.5 text-paper backdrop-blur" role="status">
+            <span className="flex items-center gap-3 font-mono text-sm">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-fail" aria-hidden />
+              Recording the walkthrough
+              <span className="figure text-[#9db0be]">{clockText(clock)} / {clockText(recording.total)}</span>
+            </span>
+            <button onClick={halt} className="btn btn-flag !px-3 !py-1.5">■ Stop and save</button>
+          </div>
+        )}
+
+        {!recording && hasPhoto && hasStructure && (
           <div role="group" aria-label="What to show" className="absolute left-4 top-4 z-20 flex overflow-hidden rounded-[3px] border border-viewport-line backdrop-blur">
             {[['photo', 'Photoreal'], ['structure', 'Structure']].map(([id, label]) => (
               <button
@@ -114,10 +243,20 @@ export default function ViewerTab({
           </div>
         )}
 
-        <div className="absolute right-4 top-4 z-20 flex flex-wrap justify-end gap-2">
+        {!recording && <div className="absolute right-4 top-4 z-20 flex flex-wrap justify-end gap-2">
           {mode === 'photo' && tour?.length > 1 && (
             <button onClick={toggleTour} className={`btn !px-3 !py-2 backdrop-blur ${touring ? 'btn-flag' : 'btn-ghost-dark'}`} aria-pressed={touring}>
               {touring ? '■ Stop walkthrough' : '▶ Walkthrough'}
+            </button>
+          )}
+          {mode === 'photo' && tour?.length > 1 && !touring && surface && canRecord() && (
+            <button onClick={startRecord} className={btn} title="Play the walkthrough and save it as a video">
+              <span className="text-fail" aria-hidden>●</span> Record
+            </button>
+          )}
+          {canMeasure && (
+            <button onClick={() => { halt(); measuring ? stopMeasuring() : setMeasuring(true) }} className={`btn !px-3 !py-2 backdrop-blur ${measuring ? 'btn-flag' : 'btn-ghost-dark'}`} aria-pressed={measuring}>
+              Measure
             </button>
           )}
           {pins.length > 0 && (
@@ -127,7 +266,7 @@ export default function ViewerTab({
           )}
           {mode === 'photo' ? (
             <>
-              <button onClick={() => { halt(); setOrient((orient + 1) % options.length) }} className={btn} title="If the room looks sideways or upside down, try another orientation">
+              <button onClick={() => { halt(); setSurface(null); setOrient((orient + 1) % options.length) }} className={btn} title="If the room looks sideways or upside down, try another orientation">
                 Orientation: {o.label}
               </button>
               <button onClick={() => { halt(); setSelected(null); frameScene(viewer.current, o.up, o.id === 'auto' ? startView : undefined) }} className={btn}>Reset view</button>
@@ -138,7 +277,10 @@ export default function ViewerTab({
           <button onClick={toggleFull} className={btn} aria-label={full ? 'Exit fullscreen' : 'Enter fullscreen'}>
             <Icon.expand /> {full ? 'Exit' : 'Fullscreen'}
           </button>
-        </div>
+        </div>}
+        {recordError && (
+          <p role="alert" className="absolute right-4 top-16 z-20 max-w-xs rounded-[3px] border border-fail/60 bg-viewport/90 px-3 py-2 text-xs text-[#f3b9a6]">{recordError}</p>
+        )}
 
         {!hasPhoto && (
           <div className="absolute inset-x-4 bottom-12 z-20 mx-auto max-w-xl rounded-[3px] border border-viewport-line bg-viewport/85 p-3 text-center text-sm text-[#c7d4de] backdrop-blur" role="status">

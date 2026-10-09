@@ -1,7 +1,7 @@
 import json
 
 from app.models.project import Project
-from app.services import calibrate, capacity, segment_rooms
+from app.services import calibrate, capacity, scale, segment_rooms
 
 
 def _load_detections(project: Project) -> dict:
@@ -16,6 +16,8 @@ FOOTPRINT_M2 = {
     "sink": 0.3, "refrigerator": 0.45, "bench": 0.5, "microwave": 0.1, "oven": 0.4, "toilet": 0.3,
     "counter": 0.9, "cabinet": 0.4, "shelf": 0.3,
 }
+# Parts of the room itself, not furniture: they take no floor space and do not make a "zone".
+STRUCTURAL = {"door", "window", "light", "picture", "curtain"}
 ZONE_RADIUS_M = 1.8  # furniture closer than this belongs to the same zone
 
 
@@ -32,17 +34,28 @@ def _build_metric(project: Project, data: dict, room_width_m: float | None, room
     recon = data["meta"]["reconstruction"]
     room = recon["room"]
 
-    # The scale is an assumption (phone held at ~1.4 m). A tape measure beats it.
+    # The scale is an assumption (phone held at ~1.4 m). A measurement beats it: the one saved
+    # with the scan, or one passed in the query to preview a number without saving it.
     factor = 1.0
     source = "estimated"
+    saved = scale.saved_meters_per_unit(data)
+    if saved:
+        factor = saved / recon["meters_per_unit"]
+        source = "user"
     if room_width_m and room["width_m"] > 0:
         factor = room_width_m / room["width_m"]
         source = "user"
         if room_depth_m and room["depth_m"] > 0:
             factor = (factor * (room_depth_m / room["depth_m"])) ** 0.5
+        saved = None  # the preview replaces the saved value for this answer only
 
-    furniture = {d["class"]: d["count"] for d in detections}
-    positions = [(p["x"] * factor, p["z"] * factor) for d in detections for p in d.get("positions", [])]
+    furniture = {d["class"]: d["count"] for d in detections if d["class"] not in STRUCTURAL}
+    structure = {d["class"]: d["count"] for d in detections if d["class"] in STRUCTURAL}
+    positions = [
+        (p["x"] * factor, p["z"] * factor)
+        for d in detections if d["class"] not in STRUCTURAL
+        for p in d.get("positions", [])
+    ]
     rooms = segment_rooms.segment_rooms(positions[:300], eps=ZONE_RADIUS_M)
 
     width, depth = room["width_m"] * factor, room["depth_m"] * factor
@@ -54,6 +67,7 @@ def _build_metric(project: Project, data: dict, room_width_m: float | None, room
         "rooms": {"count": rooms["count"], "details": rooms["rooms"]},
         "furniture": furniture,
         "furniture_total": sum(furniture.values()),
+        "structure": structure,
         "seating_capacity": capacity.compute_capacity(detections),
         "area": {
             "unit_area": None,
@@ -70,6 +84,8 @@ def _build_metric(project: Project, data: dict, room_width_m: float | None, room
         "layout": {
             "unit": "m",
             "scale_factor": round(factor, 4),
+            "meters_per_unit": round(recon["meters_per_unit"] * factor, 6),
+            "measured": (data["meta"].get("user_scale") if saved else None),
             "width_m": round(width, 2),
             "depth_m": round(depth, 2),
             "area_m2": round(area, 1),

@@ -115,13 +115,15 @@ function objectMarkers(pins, up, floorHeight, size) {
   return group
 }
 
-export default function StructureView({ url, recon, pins = [], showPins = true, resetKey = 0, onError }) {
+export default function StructureView({ url, recon, pins = [], showPins = true, resetKey = 0, onError, onSurface }) {
   const host = useRef(null)
   const cameraRef = useRef(null)
   const frameRef = useRef(null)
   const [status, setStatus] = useState('loading')
   const [count, setCount] = useState(0)
   const [message, setMessage] = useState('')
+  const surfaceRef = useRef(onSurface)
+  surfaceRef.current = onSurface
 
   useEffect(() => {
     if (!url || !host.current) return undefined
@@ -196,6 +198,27 @@ export default function StructureView({ url, recon, pins = [], showPins = true, 
         ro = new ResizeObserver(resize)
         ro.observe(el)
 
+        // For the Measure tool: the point nearest the click (within a few pixels), preferring the one
+        // in front. Points are a sparse sample of the surface, so "nearest on screen" is what feels right.
+        const ndc = new THREE.Vector3()
+        const pickPoint = (clientX, clientY) => {
+          const rect = renderer.domElement.getBoundingClientRect()
+          const sx = clientX - rect.left
+          const sy = clientY - rect.top
+          camera.updateMatrixWorld()
+          let best = -1
+          let bestDepth = Infinity
+          for (let i = 0; i < data.n; i++) {
+            ndc.set(data.xyz[i * 3], data.xyz[i * 3 + 1], data.xyz[i * 3 + 2]).project(camera)
+            if (ndc.z < -1 || ndc.z > 1) continue
+            const dx = ((ndc.x + 1) / 2) * rect.width - sx
+            const dy = ((1 - ndc.y) / 2) * rect.height - sy
+            if (dx * dx + dy * dy <= 100 && ndc.z < bestDepth) { best = i; bestDepth = ndc.z }
+          }
+          return best < 0 ? null : [data.xyz[best * 3], data.xyz[best * 3 + 1], data.xyz[best * 3 + 2]]
+        }
+        surfaceRef.current?.({ camera, canvas: renderer.domElement, pick: pickPoint })
+
         const loop = () => {
           controls.update()
           renderer.render(scene, camera)
@@ -215,6 +238,7 @@ export default function StructureView({ url, recon, pins = [], showPins = true, 
 
     return () => {
       cancelled = true
+      surfaceRef.current?.(null)
       cancelAnimationFrame(raf)
       ro?.disconnect()
       controls?.dispose()

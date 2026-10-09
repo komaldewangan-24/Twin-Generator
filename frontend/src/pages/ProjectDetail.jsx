@@ -31,7 +31,7 @@ export default function ProjectDetail() {
   const [objects, setObjects] = useState(null) // { detections, meta }
   const [analytics, setAnalytics] = useState(null)
   const [progress, setProgress] = useState(null)
-  const [tab, setTab] = useState('objects')
+  const [pickedTab, setTab] = useState(null)
   const [uploadProgress, setUploadProgress] = useState(null)
   const [splatProgress, setSplatProgress] = useState(null)
   const [showReplace, setShowReplace] = useState(false)
@@ -146,15 +146,30 @@ export default function ProjectDetail() {
     }
   }
 
+  // The real size of the room, from a tape measure or from two points picked in the 3D view.
+  // It is saved with the scan, so the floor plan, analytics, assistant and PDF all follow it.
+  const saveScale = async (body, fallback) => {
+    try {
+      const { data } = await api.post(`/projects/${id}/calibrate`, body)
+      setAnalytics(data)
+      return null
+    } catch (err) {
+      return apiErrorMessage(err, fallback)
+    }
+  }
   const calibrate = async (width, depth) => {
     setError('')
+    const failure = await saveScale({ longer_side_m: width, ...(depth ? { shorter_side_m: depth } : {}) }, 'Could not apply that size.')
+    if (failure) setError(failure)
+  }
+  const calibrateByPoints = (a, b, realMetres) => saveScale({ a, b, real_m: realMetres }, 'Could not set the scale.')
+  const resetScale = async () => {
+    setError('')
     try {
-      const { data } = await api.get(`/projects/${id}/analytics`, {
-        params: { room_width_m: width, ...(depth ? { room_height_m: depth } : {}) },
-      })
+      const { data } = await api.delete(`/projects/${id}/calibrate`)
       setAnalytics(data)
     } catch (err) {
-      setError(apiErrorMessage(err, 'Could not apply that size.'))
+      setError(apiErrorMessage(err, 'Could not go back to the estimate.'))
     }
   }
 
@@ -204,6 +219,8 @@ export default function ProjectDetail() {
     )
   }
 
+  // The 3D model is the headline of a scan, so open on it whenever there is something to show.
+  const tab = pickedTab ?? (project.has_splat || project.has_structure ? 'viewer' : 'objects')
   const training = project.status === 'TRAINING_3D'
   const processing = PROCESSING.includes(project.status) && !(training && objects)
   const done = project.status === 'DONE' || (training && !!objects)
@@ -212,6 +229,9 @@ export default function ProjectDetail() {
   const detections = objects?.detections ?? []
   const needsVideo = !processing && !done
   const recon = objects?.meta?.reconstruction ?? null
+  // metres per model unit: the estimate, or the person's measurement once they have made one
+  const metersPerUnit = analytics?.layout?.meters_per_unit ?? recon?.meters_per_unit
+  const unitsPerMeter = metersPerUnit ? 1 / metersPerUnit : 1
 
   const stats = [
     { label: 'Scanned', value: formatDate(project.scan_date, { month: 'short', day: 'numeric', year: 'numeric' }) },
@@ -291,7 +311,7 @@ export default function ProjectDetail() {
                 ) : (
                   <ErrorBoundary title="This tab hit an error">
                     {tab === 'viewer' && (
-                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={openDemo} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} structureUrl={structureUrl} recon={recon} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={recon?.meters_per_unit ? 1 / recon.meters_per_unit : 1} />
+                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={openDemo} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} structureUrl={structureUrl} recon={recon} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={unitsPerMeter} scaleMeasured={analytics?.layout?.measured ?? null} onMeasureCalibrate={calibrateByPoints} onResetScale={resetScale} name={project.name} />
                     )}
                     {tab === 'objects' && <ObjectsTab detections={detections} meta={objects?.meta} onShow3D={project.has_splat ? showIn3D : null} />}
                     {tab === 'floor' && (
@@ -305,7 +325,7 @@ export default function ProjectDetail() {
                         </p>
                       </section>
                     )}
-                    {tab === 'analytics' && <AnalyticsTab analytics={analytics} detections={detections} onCalibrate={calibrate} />}
+                    {tab === 'analytics' && <AnalyticsTab analytics={analytics} detections={detections} onCalibrate={calibrate} onResetScale={resetScale} />}
                     {tab === 'chat' && <ChatPanel projectId={id} detections={detections} onShow3D={project.has_splat ? showIn3D : null} />}
                   </ErrorBoundary>
                 )}

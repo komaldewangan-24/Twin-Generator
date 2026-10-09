@@ -34,6 +34,28 @@ RULE_BASED_CLASS_SYNONYMS = {
     "fridge": "refrigerator",
     "refrigerator": "refrigerator",
     "bench": "bench",
+    "door": "door",
+    "doors": "door",
+    "window": "window",
+    "windows": "window",
+    "light": "light",
+    "lights": "light",
+    "lamp": "light",
+    "lamps": "light",
+    "cabinet": "cabinet",
+    "cabinets": "cabinet",
+    "cupboard": "cabinet",
+    "cupboards": "cabinet",
+    "shelf": "shelf",
+    "shelves": "shelf",
+    "bookshelf": "shelf",
+    "bookcase": "shelf",
+    "counter": "counter",
+    "curtain": "curtain",
+    "curtains": "curtain",
+    "picture": "picture",
+    "pictures": "picture",
+    "painting": "picture",
 }
 
 
@@ -115,7 +137,8 @@ def _rule_based_answer(question: str, project, analytics: dict) -> str:
                     p = d["positions"][0]
                     metric = json.loads(project.detections_json).get("meta", {}).get("unit") == "m"
                     label = DISPLAY_NAMES.get(cls, cls)
-                    where = f"about {p['x']:.1f} m across and {p['z']:.1f} m down the floor plan" if metric else "in the camera view"
+                    fac = (analytics.get("layout") or {}).get("scale_factor", 1.0)
+                    where = f"about {p['x'] * fac:.1f} m across and {p['z'] * fac:.1f} m down the floor plan" if metric else "in the camera view"
                     if d["count"] > 1:
                         return f"I found {d['count']} {label}s. The first is {where}. I've marked it in the 3D view."
                     return f"The {label} is {where}. I've marked it in the 3D view."
@@ -170,10 +193,11 @@ def _scene_context(project, analytics: dict) -> str:
     1-based number so the model can point at one ("FOCUS: chair 2")."""
     data = json.loads(project.detections_json) if project.detections_json else {"detections": []}
     meta = data.get("meta", {})
+    fac = (analytics.get("layout") or {}).get("scale_factor", 1.0)  # positions are stored at the estimated scale
     scene = {
         "units": "metres, x and z are floor coordinates with the room's corner at 0,0" if meta.get("unit") == "m" else "normalised camera-view units (not metres)",
         "objects": [
-            {"kind": d["class"], "count": d["count"], "items": [{"n": i + 1, "x": p["x"], "z": p["z"]} for i, p in enumerate(d["positions"][:30])]}
+            {"kind": d["class"], "count": d["count"], "items": [{"n": i + 1, "x": round(p["x"] * fac, 2), "z": round(p["z"] * fac, 2)} for i, p in enumerate(d["positions"][:30])]}
             for d in data.get("detections", [])
         ],
         "zones": analytics["rooms"]["details"],

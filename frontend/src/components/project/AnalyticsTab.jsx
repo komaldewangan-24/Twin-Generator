@@ -16,7 +16,7 @@ function Row({ label, value, hint }) {
   )
 }
 
-export default function AnalyticsTab({ analytics, detections, onCalibrate }) {
+export default function AnalyticsTab({ analytics, detections, onCalibrate, onResetScale }) {
   const [w, setW] = useState('')
   const [d, setD] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,7 +53,7 @@ export default function AnalyticsTab({ analytics, detections, onCalibrate }) {
               <Row
                 label="Room size"
                 value={`${estimated ? '~' : ''}${layout.width_m.toFixed(1)} × ${layout.depth_m.toFixed(1)} m`}
-                hint={estimated ? 'Estimated from camera height. Enter a measurement below to correct it.' : 'Scaled to your measurement'}
+                hint={estimated ? 'Estimated from camera height. Measure something in the 3D view, or enter the room below, to correct it.' : 'Scaled to your measurement'}
               />
               <Row label="Floor area" value={`${estimated ? '~' : ''}${layout.area_m2} m²`} />
               <Row label="Ceiling height" value={`${estimated ? '~' : ''}${layout.ceiling_height_m} m`} />
@@ -77,7 +77,7 @@ export default function AnalyticsTab({ analytics, detections, onCalibrate }) {
           <h3 className="text-lg font-semibold">{layout ? 'Correct the scale' : 'Set the real size'}</h3>
           <p className="mt-1 text-sm text-graphite">
             {layout
-              ? 'Sizes are estimated by assuming the phone was held at 1.4 m. Measure the room with a tape and enter its sides to make every size here exact.'
+              ? 'Sizes are estimated by assuming the phone was held at 1.4 m. Enter the real length of the room to make every size here exact. It is saved with the scan.'
               : 'Measure the scanned area with a tape. Width is the left-to-right distance in the video; depth is the distance from the camera to the far wall.'}
           </p>
           <div className="mt-4 grid grid-cols-[1fr_1fr_auto] items-end gap-3">
@@ -91,6 +91,15 @@ export default function AnalyticsTab({ analytics, detections, onCalibrate }) {
             </label>
             <button type="submit" disabled={busy || !w} className="btn btn-ink">{busy ? 'Applying' : 'Apply'}</button>
           </div>
+          {layout && !estimated && (
+            <p className="mt-3 text-sm text-graphite">
+              The scale is set from your measurement and saved with this scan.{' '}
+              <button type="button" onClick={onResetScale} className="font-semibold text-ink underline decoration-flag decoration-2 underline-offset-4">Go back to the estimate</button>
+            </p>
+          )}
+          {layout && (
+            <p className="mt-3 text-sm text-graphite">Prefer to measure on the model? Open the 3D viewer, press Measure, click the two ends of something you know the length of.</p>
+          )}
         </form>
       </section>
 

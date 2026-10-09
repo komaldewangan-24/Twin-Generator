@@ -24,22 +24,33 @@ function animate(ms, step, done) {
 
 /**
  * The viewer only re-sorts its splats after a big camera move (over ~8 degrees or 1 unit).
- * When we place the camera ourselves a small move leaves the old sort in use, which can
- * leave the first frame blank, worst on slow GPUs. Force a fresh sort a few times while the
- * sorting worker is still busy loading.
+ * When we place the camera ourselves a small move leaves the old sort in use, and while the sorting
+ * worker is still starting up a request can be dropped without any error, which leaves the first
+ * frames blank (worst on slow GPUs and just after a page load). So ask again until a sort has
+ * really finished since we placed the camera, then once more to be sure.
  */
 export function refreshSort(viewer) {
   if (!viewer?.runSplatSort) return
-  for (const delay of [0, 600, 2000, 5000]) {
-    setTimeout(() => {
-      try {
+  let finished = 0
+  let tries = 0
+  let waiting = false
+  const attempt = () => {
+    try {
+      if (viewer.isDisposingOrDisposed?.() || tries++ > 40) return
+      if (!viewer.sortRunning) {
+        if (!waiting) {
+          waiting = true
+          viewer.runAfterNextSort?.push(() => { waiting = false; finished += 1 })
+        }
         viewer.runSplatSort(true, true)
         viewer.forceRenderNextFrame?.()
-      } catch {
-        /* viewer was disposed */
       }
-    }, delay)
+    } catch {
+      return // viewer was disposed
+    }
+    if (finished < 2) setTimeout(attempt, finished ? 1200 : 400)
   }
+  attempt()
 }
 
 function look(viewer, position, target) {
@@ -73,6 +84,11 @@ export function flyToObject(viewer, world, up, unitsPerMeter, done) {
   }, () => { refreshSort(viewer); done?.() })
 }
 
+const SEGMENT_MS = 900
+
+/** How long playTour takes for these poses, in milliseconds. */
+export const tourDuration = (poses) => SEGMENT_MS * Math.max(0, (poses?.length ?? 0) - 1)
+
 /** Replay the walk: glide through the real camera poses in the order they were filmed. */
 export function playTour(viewer, poses, unitsPerMeter, onEnd) {
   if (!viewer?.controls || !poses?.length) return () => {}
@@ -84,7 +100,6 @@ export function playTour(viewer, poses, unitsPerMeter, onEnd) {
     return { pos, fwd }
   })
   const lookAhead = 1.2 * unitsPerMeter
-  const SEGMENT_MS = 900
   const pos = new Vector3()
   const fwd = new Vector3()
   const tgt = new Vector3()

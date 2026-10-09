@@ -76,9 +76,18 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
   onLoadRef.current = onLoad
   onErrorRef.current = onError
 
+  // `up` and `startView` arrive as fresh arrays/objects whenever the scan data is re-fetched. Rebuilding
+  // the viewer for an identical value would throw away the loaded model (and break a running walkthrough
+  // or recording), so the effect depends on their values, not their identity.
+  const upKey = up.join()
+  const startKey = JSON.stringify(startView ?? null)
+  const latest = useRef({})
+  latest.current = { up, startView }
+
   useEffect(() => {
     if (!url) return
     let cancelled = false
+    const { up, startView } = latest.current
 
     const init = async () => {
       try {
@@ -101,6 +110,9 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
           // leaves the splat sorter worker broken and nothing ever renders.
           sharedMemoryForWorkers: false,
           cameraUp: up,
+          // The default reveals the model with a fade that needs a stream of rendered frames. Where frames
+          // are throttled (a background tab, a slow GPU) it stalls half-way and the view stays blank.
+          sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
         })
         viewerRef.current = viewer
 
@@ -148,7 +160,7 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
         /* ignore teardown errors */
       }
     }
-  }, [url, ext, up, startView])
+  }, [url, ext, upKey, startKey])
 
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden">
