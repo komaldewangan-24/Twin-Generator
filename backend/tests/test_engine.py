@@ -31,6 +31,36 @@ def test_ply_to_splat_converts_and_drops_floaters(tmp_path):
     assert out.stat().st_size < ply.stat().st_size
 
 
+def test_ply_to_splat_keeps_the_faint_haze_that_walls_are_built_from(tmp_path):
+    """Regression: dropping everything under 5% opacity (46% of a real scan) and the biggest 1% left black
+    holes behind the furniture. Faint splats and the large background ones must survive; only invisible
+    splats and absurd outliers go."""
+    import numpy as np
+
+    from app.services.splat_convert import ply_to_splat
+
+    n = 2000
+    fields = ["x", "y", "z", "f_dc_0", "f_dc_1", "f_dc_2", "opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
+    data = np.zeros(n, dtype=[(f, "<f4") for f in fields])
+    rng = np.random.default_rng(1)
+    data["x"], data["y"], data["z"] = rng.uniform(-2, 2, (3, n))
+    data["opacity"][:1000] = np.log(0.03 / 0.97)         # faint but visible: 3%
+    data["opacity"][1000:1800] = 2.0                      # solid
+    data["opacity"][1800:] = np.log(0.005 / 0.995)        # invisible: 0.5%
+    data["scale_0"] = data["scale_1"] = data["scale_2"] = np.log(0.05)
+    data["scale_0"][:30] = np.log(0.8)                    # 1.5% are large background splats
+    data["rot_0"] = 1.0
+    ply = tmp_path / "in.ply"
+    with open(ply, "wb") as f:
+        f.write(("ply\nformat binary_little_endian 1.0\nelement vertex %d\n" % n + "".join(f"property float {k}\n" for k in fields) + "end_header\n").encode())
+        data.tofile(f)
+
+    stats = ply_to_splat(ply, tmp_path / "o.splat", max_count=None)
+    assert stats["out"] >= 1790, "the 1000 faint splats and the large ones must be kept (only the 200 invisible go)"
+    kept = np.fromfile(tmp_path / "o.splat", dtype=[("p", "<f4", 3), ("s", "<f4", 3), ("c", "u1", 4), ("r", "u1", 4)])
+    assert (kept["s"].max(axis=1) > 0.5).sum() >= 28, "the large background splats must stay"
+
+
 def test_extractor_keeps_short_side_720_for_portrait_and_landscape(tmp_path):
     """Phone video is usually portrait. It must keep full resolution (720 wide),
     not shrink to 405 px wide."""
@@ -109,6 +139,36 @@ assert args[args.index("--sh-degree") + 1] == "0"
     monkeypatch.setattr(reconstruct, "find_brush", lambda: brush)
     (tmp_path / "ds").mkdir()
     reconstruct.train_splat(tmp_path / "ds", tmp_path / "o" / "m.ply", lambda *a: None)
+
+
+def test_trainer_stops_growing_splats_early_and_polishes(tmp_path, monkeypatch):
+    """Brush's own schedule never stops growing in a run shorter than 30000 steps, which left short runs
+    unpolished (measured: 1.4 dB worse in the viewer). Growth must end part-way through."""
+    from app.services import reconstruct
+
+    brush = _fake_brush(tmp_path, '''
+assert args[args.index("--growth-stop-iter") + 1] == "9900"
+assert args[args.index("--growth-grad-threshold") + 1] == "0.00002"
+''' + FAKE_OK)
+    monkeypatch.setattr(reconstruct, "find_brush", lambda: brush)
+    (tmp_path / "ds").mkdir()
+    reconstruct.train_splat(tmp_path / "ds", tmp_path / "o" / "m.ply", lambda *a: None, steps=18000)
+
+
+def test_quality_presets_choose_the_training_length(monkeypatch):
+    import importlib
+
+    from app.core import config
+
+    for preset, steps in {"fast": 7000, "balanced": 12000, "high": 18000, "max": 30000, "": 18000}.items():
+        monkeypatch.setenv("SPLAT_QUALITY", preset)
+        monkeypatch.delenv("SPLAT_TRAIN_STEPS", raising=False)
+        assert importlib.reload(config).Settings().SPLAT_TRAIN_STEPS == steps
+    monkeypatch.setenv("SPLAT_TRAIN_STEPS", "9000")
+    assert importlib.reload(config).Settings().SPLAT_TRAIN_STEPS == 9000, "an exact number of steps beats the preset"
+    monkeypatch.delenv("SPLAT_TRAIN_STEPS")
+    monkeypatch.delenv("SPLAT_QUALITY")
+    importlib.reload(config)
 
 
 def test_trainer_failure_messages_tell_people_what_to_do():

@@ -208,7 +208,11 @@ Each upload builds its own Gaussian splat. This needs two things beyond `pip ins
 1. `pycolmap` (already in `requirements.txt`): camera positions. Runs on CPU, about 3 minutes for 200 frames.
 2. **Brush**, the splat trainer. `python backend/scripts/install_brush.py` downloads the right build for your OS from <https://github.com/ArthurBrussee/brush/releases>, checks its checksum and unpacks it under `backend/tools/`. The app finds it there, or set `BRUSH_PATH`. Brush needs a GPU with Metal, Vulkan or DX12 but **not** NVIDIA.
 
-Expect about 10 to 20 minutes of training on an Apple M-series chip. Objects, floor plan and analytics are available as soon as the camera path is found; the 3D tab shows progress until the model is ready.
+Training takes about 25 minutes on an Apple M4 at the default `SPLAT_QUALITY=high`, and proportionally longer on a slower card. `fast` (about 8 minutes), `balanced` (14), `high` (25) and `max` (47) trade time for sharpness; measured against photos the model never saw, the browser view scores 26.0, 26.5, 27.4 and 28.0 dB respectively (the converter before this tuning scored 22.6 dB). Set it in `backend/.env`, or use `python scripts/retrain.py <project-id>` to rebuild the 3D model of an older scan with the current settings.
+
+![Playroom scan before and after the converter and training changes, next to the photo it should match](docs/model-quality.jpg)
+
+The two biggest causes of a blurry, smeary model were both found by rendering the same camera positions in the app's own viewer and comparing with photos: (1) the converter threw away every splat under 5% opacity, which is 46% of them, because Brush builds walls and ceilings out of hundreds of thousands of faint splats, leaving black holes and noise; (2) Brush never stops adding splats in a run shorter than 30000 steps, so short runs were never polished. Both are fixed. Training steps matter less than they look: Brush's own render improves by 0.2 dB from 12000 to 30000 steps, the browser view by 2 dB. Objects, floor plan and analytics are available as soon as the camera path is found; the 3D tab shows progress until the model is ready.
 
 For a good model: walk slowly in a loop around the room's edge, keep lighting even, avoid blank walls and pointing at windows, and film 30 to 60 seconds. If fewer than about a third of the frames can be placed in 3D, the app tells you and keeps the 2D results.
 
@@ -238,7 +242,7 @@ python scripts/setup_detector.py --open-vocab
 
 It exports an open-vocabulary YOLO-World model to ONNX in a temporary environment (about 370 MB of one-time downloads, needs Git, AGPL/GPL licence), and writes `backend/models/open_vocab.onnx` and `open_vocab.json`. The app then uses it next to the standard model, with no other setup. Process a video again, or run `python scripts/reanalyze.py <project-id>` on an existing scan, to see them. `python scripts/doctor.py` says whether it is installed.
 
-Doors and windows are drawn **in the walls** of the floor plan (a door with its swing, a window as glazing). They are far less certain than furniture: the model scores a clear door at 0.06 to 0.15 where a chair scores 0.5, so they have their own thresholds (`CLASS_CONF` in `scripts/export_open_vocab.py`) and must be seen in at least three frames. Expect to find windows more often than doors, and some misses.
+Doors and windows are drawn **in the walls** of the floor plan (a door with its swing, a window as glazing). They are the least reliable thing the app detects. On the playroom sample the model scored the real window 0.13, and scored a wall book rack, a heater and a chalkboard 0.09 to 0.14 as "window": confidence cannot tell them apart. So the app is **precision-first**: a door or window is only kept when it stays at 0.2 or more on average over at least three frames (`MIN_CONFIDENCE` in `spatial.py`), and on that sample none passes. A clearer, brighter window should. Prompt wording makes no difference; a larger YOLO-World model might, at the cost of size and speed.
 
 ---
 

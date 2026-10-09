@@ -318,7 +318,7 @@ export default function ViewerTab({
           <h2 className="mt-4 text-3xl font-semibold">Building your 3D model</h2>
           <p className="mt-3 text-[#b8c7d3]">
             Your objects and floor plan are ready in the other tabs. The photorealistic 3D model is still training and
-            can take 10 to 20 minutes. You can leave this page.
+            can take 10 to 30 minutes. You can leave this page.
           </p>
           <div className="mt-6 h-2 overflow-hidden rounded-full border border-viewport-line">
             <div className="h-full bg-flag transition-all duration-500" style={{ width: `${pct ?? 3}%` }} />

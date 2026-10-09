@@ -5,9 +5,15 @@ spherical-harmonic colour data), 100 to 200 MB for a room. The browser viewer
 only needs position, size, colour, opacity and rotation (32 bytes per splat),
 so converting makes the download about 8x smaller.
 
-It also cleans the model. Training leaves "floaters": nearly transparent or
-huge splats hanging in mid-air that look like fog in front of the camera. We
-drop splats that are almost invisible, absurdly large, or far outside the room.
+It also cleans the model, but gently. Training leaves "floaters" (huge or
+nearly transparent splats hanging in mid-air), so splats that are invisible, absurdly
+large or far outside the room are dropped. What must NOT be dropped is the faint haze:
+Brush builds walls, ceilings and backgrounds from hundreds of thousands of splats
+of 2% to 5% opacity (on the playroom scan, 46% of all splats are below 5%). An earlier
+cut at 5% plus the largest 1% removed half the model and left black holes behind the
+furniture; measured against photos the model had never seen, that cost 3.4 dB of PSNR
+(22.6 dB against 26.0 dB now). The viewer itself ignores anything below about 2%
+(its splatAlphaRemovalThreshold of 5/255), so there is nothing to gain from keeping less.
 """
 
 from __future__ import annotations
@@ -54,9 +60,9 @@ def _read_ply(path: Path) -> np.ndarray:
 def ply_to_splat(
     ply_path: Path,
     out_path: Path,
-    min_opacity: float = 0.05,
-    max_scale_percentile: float = 99.5,
-    max_distance_percentile: float = 99.0,
+    min_opacity: float = 0.02,
+    max_scale_percentile: float = 99.95,
+    max_distance_percentile: float = 99.9,
     max_count: int | None = 1_000_000,
 ) -> dict:
     """Write a cleaned .splat. Returns counts for logging."""

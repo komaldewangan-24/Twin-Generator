@@ -35,9 +35,15 @@ class Settings:
         next((p for p in (BASE_DIR / "models" / "yolov8s.onnx", BASE_DIR / "models" / "yolov8n.onnx") if p.exists()), BASE_DIR / "models" / "yolov8n.onnx")
     )
 
-    # Splat training length. More steps = sharper model but longer wait (about 16 min for
-    # 12000 on an Apple M4). 7000 is a decent quick preset.
-    SPLAT_TRAIN_STEPS: int = int(os.getenv("SPLAT_TRAIN_STEPS") or 12000)
+    # How long to train each 3D model. Quality of what the browser shows, measured as PSNR against
+    # photos the model never saw (playroom scan, Apple M4; older default 22.6 dB with its converter):
+    #   fast      7000 steps   about  8 min
+    #   balanced 12000 steps   about 14 min   26.5 dB
+    #   high     18000 steps   about 25 min   27.4 dB   (default)
+    #   max      30000 steps   about 47 min   28.0 dB
+    # SPLAT_TRAIN_STEPS overrides the preset with an exact number of steps.
+    SPLAT_QUALITY: str = os.getenv("SPLAT_QUALITY") or "high"
+    SPLAT_TRAIN_STEPS: int = int(os.getenv("SPLAT_TRAIN_STEPS") or {"fast": 7000, "balanced": 12000, "high": 18000, "max": 30000}.get(os.getenv("SPLAT_QUALITY") or "high", 18000))
     # Graphics-memory limits for the trainer. The defaults suit a 6 GB card; a 4 GB laptop
     # GPU (RTX 3050 / 4050) may need SPLAT_MAX_SPLATS=300000 and SPLAT_MAX_RESOLUTION=800.
     SPLAT_MAX_SPLATS: int = int(os.getenv("SPLAT_MAX_SPLATS") or 1_000_000)

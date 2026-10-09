@@ -28,6 +28,8 @@ from app.core.config import BASE_DIR
 
 Progress = Callable[[str, float, str], None]  # (stage, fraction 0..1, message)
 
+GROWTH_STOP_FRACTION = 0.55
+TRAIN_TIMEOUT_MIN = 150      # a slow laptop GPU needs well over an hour for the high preset
 MAX_SFM_FRAMES = 240
 MIN_REGISTERED = 12          # fewer registered frames than this = reconstruction failed
 MIN_REGISTERED_RATIO = 0.35  # ...or fewer than this share of the frames we gave it
@@ -227,6 +229,11 @@ def _run_brush(brush: str, dataset: Path, out_ply: Path, progress: Progress, ste
         "--total-steps", str(steps),
         "--max-resolution", str(max_resolution),
         "--max-splats", str(max_splats),
+        # Grow splats where the picture is still wrong (a lower threshold than Brush's default
+        # finds more detail), then stop growing at 55% of the run and spend the rest polishing.
+        # Brush's own default never stops growing in a run shorter than 30000 steps.
+        "--growth-grad-threshold", "0.00002",
+        "--growth-stop-iter", str(int(steps * GROWTH_STOP_FRACTION)),
         # The browser viewer shows base colour only, so view-dependent colour (spherical
         # harmonics) would be trained and then thrown away. Skipping it also cuts GPU
         # memory and time, which matters on a 4 GB laptop card.
@@ -248,7 +255,7 @@ def _run_brush(brush: str, dataset: Path, out_ply: Path, progress: Progress, ste
             if latest:
                 frac = min(latest[0] / steps, 0.98)
                 progress("train", frac, f"Training the 3D model ({int(frac * 100)}%)")
-            if time.time() - started > 60 * 60:
+            if time.time() - started > TRAIN_TIMEOUT_MIN * 60:
                 proc.kill()
                 raise ReconstructionError("The 3D model took too long to train and was stopped.")
     if proc.returncode != 0:

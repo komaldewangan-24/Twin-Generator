@@ -58,7 +58,7 @@ export default function ProcessingPanel({ status, frameCount, progress }) {
             </li>
           )
         })}
-        <li className="pt-3 text-sm text-[#7e92a2]">You can leave this page. Progress is saved. Building a 3D model can take 10 to 20 minutes.</li>
+        <li className="pt-3 text-sm text-[#7e92a2]">You can leave this page. Progress is saved. Building a 3D model can take 10 to 30 minutes.</li>
       </ol>
     </div>
   )
