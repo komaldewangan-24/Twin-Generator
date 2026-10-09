@@ -32,6 +32,8 @@ backend/storage/*.sqlite
 backend/storage/*.sqlite3
 *.ply
 *.splat
+# ...except the demo scan that ships with the app
+!backend/demo/demo.splat
 *.spz
 *.mp4
 *.mov

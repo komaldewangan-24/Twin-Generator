@@ -100,26 +100,6 @@ def upload_splat(
     return ProjectResponse.model_validate(project)
 
 
-@router.post("/{project_id}/splat/demo", status_code=201)
-def attach_demo_splat(
-    project_id: str,
-    user_id: str = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Attach the bundled demo gaussian splat so the 3D viewer works
-    immediately without an external training run."""
-    project = _get_project_or_404(project_id, user_id, db)
-    demo = Path(settings.SPLATS_DIR) / "demo.splat"
-    if not demo.exists():
-        raise HTTPException(status_code=404, detail="Demo model missing on server")
-    project.splat_path = str(demo)
-    project.status = ProjectStatus.DONE
-    project.error_message = None
-    db.commit()
-    db.refresh(project)
-    return ProjectResponse.model_validate(project)
-
-
 @router.get("/{project_id}/status")
 def get_status(
     project_id: str,

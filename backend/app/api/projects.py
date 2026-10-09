@@ -1,13 +1,14 @@
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.project import Project, ProjectStatus
 from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
+from app.services import demo
 from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -47,6 +48,20 @@ def create_project(
     db.add(project)
     db.commit()
     db.refresh(project)
+    return project
+
+
+@router.post("/demo", response_model=ProjectResponse)
+def add_demo_project(
+    response: Response,
+    user_id: str = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add the bundled demo scan (3D model, objects, floor plan) to this account."""
+    if not demo.available():
+        raise HTTPException(status_code=404, detail="The demo scan is not included in this copy of the app.")
+    project, created = demo.create_demo_project(db, user_id)
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return project
 
 
