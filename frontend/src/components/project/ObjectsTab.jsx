@@ -3,6 +3,18 @@ import { classLabel, classSingular, totalObjects } from '../../lib/format'
 
 export default function ObjectsTab({ detections, meta, onShow3D }) {
   const inSpace = meta?.unit === 'm'
+  if (detections.length === 0 && meta?.detector_error) {
+    return (
+      <div className="sheet p-10 text-center">
+        <h2 className="text-2xl font-semibold">Objects could not be detected</h2>
+        <p className="mx-auto mt-2 max-w-md text-graphite">
+          The object detector is not set up on this computer, so only the 3D model and room size are available.
+          Export the detector model once (see the README, "Model weights") and process the video again, or run{' '}
+          <span className="font-mono text-sm">python backend/scripts/doctor.py</span> to see what is missing.
+        </p>
+      </div>
+    )
+  }
   if (detections.length === 0) {
     return (
       <div className="sheet p-10 text-center">

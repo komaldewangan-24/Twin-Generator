@@ -22,6 +22,26 @@ function animate(ms, step, done) {
   }
 }
 
+/**
+ * The viewer only re-sorts its splats after a big camera move (over ~8 degrees or 1 unit).
+ * When we place the camera ourselves a small move leaves the old sort in use, which can
+ * leave the first frame blank, worst on slow GPUs. Force a fresh sort a few times while the
+ * sorting worker is still busy loading.
+ */
+export function refreshSort(viewer) {
+  if (!viewer?.runSplatSort) return
+  for (const delay of [0, 600, 2000, 5000]) {
+    setTimeout(() => {
+      try {
+        viewer.runSplatSort(true, true)
+        viewer.forceRenderNextFrame?.()
+      } catch {
+        /* viewer was disposed */
+      }
+    }, delay)
+  }
+}
+
 function look(viewer, position, target) {
   viewer.camera.position.copy(position)
   viewer.controls.target.copy(target)
@@ -50,7 +70,7 @@ export function flyToObject(viewer, world, up, unitsPerMeter, done) {
     pos.lerpVectors(fromPos, endPos, e)
     tgt.lerpVectors(fromTarget, target, e)
     look(viewer, pos, tgt)
-  }, done)
+  }, () => { refreshSort(viewer); done?.() })
 }
 
 /** Replay the walk: glide through the real camera poses in the order they were filmed. */
@@ -76,7 +96,7 @@ export function playTour(viewer, poses, unitsPerMeter, onEnd) {
     fwd.lerpVectors(smooth[i].fwd, smooth[i + 1].fwd, k).normalize()
     tgt.copy(pos).addScaledVector(fwd, lookAhead)
     look(viewer, pos, tgt)
-  }, onEnd)
+  }, () => { refreshSort(viewer); onEnd?.() })
 }
 
 /** Screen position of a 3D point, or null when it is behind the camera. */

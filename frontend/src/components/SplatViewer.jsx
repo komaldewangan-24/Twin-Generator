@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Vector3 } from 'three'
+import { refreshSort } from '../lib/camera'
 
 /** Which axis points "up" differs between splat trainers, so the viewer lets the user pick. */
 export const ORIENTATIONS = [
@@ -46,6 +47,7 @@ export function frameScene(viewer, upArr, startView) {
     viewer.controls.target.copy(pos).addScaledVector(fwd, r * 0.6)
     viewer.camera.lookAt(viewer.controls.target)
     viewer.controls.update()
+    refreshSort(viewer)
     return
   }
   const up = new Vector3(...upArr).normalize()
@@ -57,7 +59,10 @@ export function frameScene(viewer, upArr, startView) {
   viewer.controls.target.copy(c)
   viewer.camera.lookAt(c)
   viewer.controls.update()
+  refreshSort(viewer)
 }
+
+const NO_WEBGL2 = 'webgl2-unavailable'
 
 export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startView, onLoad, onError }) {
   const containerRef = useRef(null)
@@ -79,6 +84,10 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
       try {
         setStatus('loading')
         setError(null)
+
+        // Without WebGL2 (graphics acceleration off, or a blocked GPU) nothing can be drawn.
+        const probe = document.createElement('canvas').getContext('webgl2')
+        if (!probe) throw new Error(NO_WEBGL2)
 
         const GaussianSplats3D = await import('@mkkellogg/gaussian-splats-3d')
         if (cancelled || !containerRef.current) return
@@ -151,12 +160,24 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
       )}
 
       {status === 'error' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-viewport p-6 text-center">
-                    <span className="font-display text-lg font-semibold text-paper">This 3D file could not be shown</span>
-          <span className="max-w-md break-words text-xs text-[#7e92a2]">{error}</span>
-          <span className="max-w-md text-xs text-[#7e92a2]">
-            Supported files: .splat, .ply or .spz exported from a splat trainer.
-          </span>
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 overflow-y-auto bg-viewport p-6 text-center">
+          {error === NO_WEBGL2 ? (
+            <>
+              <span className="font-display text-lg font-semibold text-paper">Your browser is not using the graphics card</span>
+              <span className="max-w-md text-sm text-[#b8c7d3]">
+                3D needs WebGL2. In Chrome or Edge, turn on <b>Use graphics acceleration when available</b> (Settings &gt; System)
+                and restart the browser. On a laptop with two graphics chips, open Windows <b>Settings &gt; System &gt; Display &gt;
+                Graphics</b>, add the browser and choose <b>High performance</b>.
+              </span>
+              <span className="max-w-md text-xs text-[#7e92a2]">Tip: open chrome://gpu to check that WebGL2 says "Hardware accelerated".</span>
+            </>
+          ) : (
+            <>
+              <span className="font-display text-lg font-semibold text-paper">This 3D file could not be shown</span>
+              <span className="max-w-md break-words text-xs text-[#7e92a2]">{error}</span>
+              <span className="max-w-md text-xs text-[#7e92a2]">Supported files: .splat, .ply or .spz exported from a splat trainer.</span>
+            </>
+          )}
         </div>
       )}
     </div>

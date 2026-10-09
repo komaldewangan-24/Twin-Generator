@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import AppHeader from '../components/AppHeader'
 import { ConfirmDialog, Corners, Icon, IconButton, StatusPill } from '../components/ui'
 import api, { apiErrorMessage } from '../lib/api'
@@ -127,6 +127,8 @@ export default function Dashboard() {
   const [newName, setNewName] = useState('')
   const [error, setError] = useState('')
   const [toDelete, setToDelete] = useState(null)
+  const [demoBusy, setDemoBusy] = useState(false)
+  const navigate = useNavigate()
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -162,6 +164,20 @@ export default function Dashboard() {
       fetchProjects()
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not create the scan.'))
+    }
+  }
+
+  // A ready-made scan (3D model, objects, floor plan) so the app can be shown without training anything.
+  const addDemo = async () => {
+    setDemoBusy(true)
+    setError('')
+    try {
+      const { data } = await api.post('/projects/demo')
+      navigate(`/project/${data.id}`)
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not add the demo scan.'))
+    } finally {
+      setDemoBusy(false)
     }
   }
 
@@ -217,6 +233,9 @@ export default function Dashboard() {
               className="field"
             />
             <button type="submit" disabled={!newName.trim()} className="btn btn-flag">New scan</button>
+            <button type="button" onClick={addDemo} disabled={demoBusy} className="btn btn-ghost" title="Add a ready-made scan with a 3D model, no video needed">
+              {demoBusy ? 'Adding' : 'Demo scan'}
+            </button>
           </form>
         </div>
 
@@ -231,7 +250,8 @@ export default function Dashboard() {
             <div className="sheet px-6 py-12 sm:px-12">
               <Corners className="text-ink/50" />
               <h2 className="text-2xl font-semibold">No scans yet</h2>
-              <p className="mt-1 max-w-lg text-graphite">Name your first scan above. Here is how a scan goes:</p>
+              <p className="mt-1 max-w-lg text-graphite">Name your first scan above, or look around first with a ready-made scan. Here is how a scan goes:</p>
+              <button onClick={addDemo} disabled={demoBusy} className="btn btn-ink mt-5">{demoBusy ? 'Adding the demo' : 'Open the demo scan'}</button>
               <ol className="mt-8 grid gap-6 sm:grid-cols-3">
                 {STEPS.map(([title, text], i) => (
                   <li key={title} className="border-t-2 border-ink pt-3">

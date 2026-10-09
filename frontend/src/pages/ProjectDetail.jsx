@@ -133,13 +133,14 @@ export default function ProjectDetail() {
     }
   }
 
-  const loadDemoSplat = async () => {
+  // The demo is its own scan (its 3D model and its object positions belong together).
+  const openDemo = async () => {
     setError('')
     try {
-      await api.post(`/projects/${id}/splat/demo`)
-      await fetchProject()
+      const { data } = await api.post('/projects/demo')
+      navigate(`/project/${data.id}`)
     } catch (err) {
-      setError(apiErrorMessage(err, 'The demo model is not available on this server.'))
+      setError(apiErrorMessage(err, 'The demo scan is not available.'))
     }
   }
 
@@ -287,7 +288,7 @@ export default function ProjectDetail() {
                 ) : (
                   <ErrorBoundary title="This tab hit an error">
                     {tab === 'viewer' && (
-                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={loadDemoSplat} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={recon?.meters_per_unit ? 1 / recon.meters_per_unit : 1} />
+                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={openDemo} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={recon?.meters_per_unit ? 1 / recon.meters_per_unit : 1} />
                     )}
                     {tab === 'objects' && <ObjectsTab detections={detections} meta={objects?.meta} onShow3D={project.has_splat ? showIn3D : null} />}
                     {tab === 'floor' && (

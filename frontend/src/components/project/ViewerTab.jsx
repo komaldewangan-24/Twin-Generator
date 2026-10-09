@@ -117,7 +117,12 @@ export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress
         <p className="label !text-flag">3D viewer</p>
         <h2 className="mt-2 text-3xl font-semibold">{error ? 'No 3D model could be built' : 'No 3D model attached yet'}</h2>
         {error ? (
-          <p className="mt-3 text-[#f3b9a6]">{error}</p>
+          <>
+            <p className="mt-3 text-[#f3b9a6]">{error}</p>
+            <p className="mt-2 text-sm text-[#9db0be]">
+              To find out why, run <span className="font-mono">python backend/scripts/doctor.py --gpu-test</span> on the computer that runs the server.
+            </p>
+          </>
         ) : (
           <p className="mt-3 text-[#b8c7d3]">
             3D models are built automatically from a new video. For older scans, train a Gaussian splat with a tool like
@@ -127,7 +132,7 @@ export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress
         {splatProgress == null ? (
           <div className="mt-7 flex flex-wrap justify-center gap-3">
             <button className="btn btn-flag" onClick={() => fileInput.current?.click()}><Icon.upload /> Attach .ply or .splat</button>
-            <button className="btn btn-ghost-dark" onClick={onDemo}>Try the demo model</button>
+            <button className="btn btn-ghost-dark" onClick={onDemo}>Open the demo scan</button>
           </div>
         ) : (
           <div className="mx-auto mt-7 w-64" role="status">
