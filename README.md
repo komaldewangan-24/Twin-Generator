@@ -172,7 +172,8 @@ python backend/scripts/doctor.py --gpu-test
 
 The usual causes, in order of how often they happen:
 
-1. **The 3D trainer (Brush) is not installed.** It is a separate download (see "Getting started" above). Without it a new video still gives objects, floor plan and analytics, but the 3D tab says no model could be built.
+1. **The 3D trainer (Brush) is not installed, or its download failed.** Run `python backend/scripts/install_brush.py`: it resumes dropped downloads, checks the checksum, and prints what to do if it still fails. Without the trainer a new video still gives objects, floor plan and analytics, but the 3D tab says no model could be built.
+   **If the download keeps failing** (slow or blocked connection, antivirus, proxy): open <https://github.com/ArthurBrussee/brush/releases/tag/v0.3.0> in your browser, download `brush-app-x86_64-pc-windows-msvc.zip` (Windows), save it inside `backend\tools\` and run the script again; it unpacks the file you saved. If Windows Security removes `brush_app.exe`, add an exclusion for `backend\tools` and run it again.
 2. **The graphics card ran out of memory** (common on 4 GB laptop GPUs such as the RTX 3050). The app retries once with lighter settings by itself. To start light every time, put this in `backend/.env`: `SPLAT_MAX_SPLATS=300000` and `SPLAT_MAX_RESOLUTION=800`.
 3. **Windows picked the wrong GPU** on a laptop with two (Intel/AMD plus NVIDIA). Open Windows *Settings > System > Display > Graphics*, add `chrome.exe` (or Edge) and `python.exe`, and set both to *High performance*. In Chrome also turn on *Settings > System > Use graphics acceleration*, then check `chrome://gpu` says WebGL2 is hardware accelerated.
 4. **Missing runtime on Windows.** Install the *Microsoft Visual C++ Redistributable (x64)*.
