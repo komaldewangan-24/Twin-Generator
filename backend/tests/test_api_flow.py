@@ -97,6 +97,7 @@ def test_full_flow():
             "analytics": analytics,
         }, indent=2, default=str))
 
+
 def test_file_links_are_private():
     """Files need a short-lived file token that belongs to the project's owner."""
     with make_client() as client:
@@ -118,3 +119,31 @@ def test_file_links_are_private():
         assert client.get(f"/files/{pid}/preview.jpg", params={"t": a}).status_code == 401   # a login token is not a file token
         assert client.get(f"/files/{pid}/preview.jpg", params={"t": token_b}).status_code == 404  # someone else's token
         assert client.get(f"/files/{pid}/preview.jpg", params={"t": token_a}).status_code == 404  # owner, but no preview yet
+
+
+def test_cors_accepts_any_local_port_but_not_other_sites():
+    """If Vite's port 5173 is busy it moves to 5174; that must still work."""
+    with make_client() as client:
+        def preflight(origin):
+            return client.options(
+                "/projects", headers={"Origin": origin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"}
+            )
+
+        for origin in ("http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:4173"):
+            assert preflight(origin).headers.get("access-control-allow-origin") == origin
+        for origin in ("http://evil.example", "https://localhost:5173", "http://localhost.evil.example"):
+            assert "access-control-allow-origin" not in preflight(origin).headers
+
+
+def test_detector_failure_does_not_cost_the_scan(monkeypatch):
+    """A missing detector model used to fail the whole scan, so no 3D model either."""
+    from app.services import detector, pipeline
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("The object detector model is missing")
+
+    monkeypatch.setattr(detector, "run_detection", boom)
+    result = pipeline._detect("frames", None, None, lambda *a: None)
+    assert result["detections"] == []
+    assert "missing" in result["meta"]["detector_error"]
+    assert result["meta"]["unit"] == "view"

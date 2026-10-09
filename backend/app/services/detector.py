@@ -167,6 +167,20 @@ def run_detection(frames_dir: str, recon=None, scene: spatial.Scene | None = Non
     return {"calibration": calibration, "detections": [by_class[c] for c in sorted(by_class)], "meta": meta}
 
 
+def empty_result(scene: spatial.Scene | None, error: str) -> dict:
+    """A valid result with no objects, for when detection could not run."""
+    meta = {"frames_processed": 0, "total_frames": 0, "backend": "none", "unit": "m" if scene else "view", "detector_error": error}
+    calibration = None
+    if scene:
+        meta["reconstruction"] = scene.to_json()
+        calibration = {
+            "method": scene.scale_method,
+            "meters_per_unit": round(scene.meters_per_unit, 5),
+            "assumed_camera_height_m": spatial.ASSUMED_CAMERA_HEIGHT_M,
+        }
+    return {"calibration": calibration, "detections": [], "meta": meta}
+
+
 def _merge_in_view(seen: list[dict], cls: str, cx: float, base_y: float, conf: float) -> None:
     for obj in seen:
         if obj["class"] == cls and ((obj["x"] - cx) ** 2 + (obj["z"] - base_y) ** 2) ** 0.5 < VIEW_DEDUP_DISTANCE:

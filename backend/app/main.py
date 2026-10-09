@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -52,12 +53,13 @@ async def unhandled_exception_handler(_request, exc):
     logger.exception("Unhandled error", exc_info=exc)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
+# Any localhost port is fine: if Vite's default port 5173 is taken it silently moves to
+# 5174, and a fixed list made every request fail with a confusing CORS error.
+# For a deployed site, list its address in CORS_ORIGINS (comma separated).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -140,12 +140,18 @@ def estimate_poses(frames: list[Path], work_dir: Path, progress: Progress):
 
 
 def find_brush() -> str | None:
+    """Locate the Brush trainer: BRUSH_PATH, then anywhere under backend/tools/, then PATH.
+
+    The search is recursive because Windows zip tools often extract into a nested folder
+    (tools/brush-app-.../brush-app-.../brush_app.exe)."""
     env = os.environ.get("BRUSH_PATH")
     if env and Path(env).exists():
         return env
-    for p in sorted((BASE_DIR / "tools").glob("brush-app-*/brush_app*")):
-        if p.is_file() and os.access(p, os.X_OK):
-            return str(p)
+    tools = BASE_DIR / "tools"
+    if tools.exists():
+        for p in sorted(tools.rglob("brush_app*")):
+            if p.is_file() and p.suffix.lower() in ("", ".exe") and os.access(p, os.X_OK):
+                return str(p)
     return shutil.which("brush_app") or shutil.which("brush")
 
 
@@ -181,14 +187,36 @@ def _latest_export(export_dir: Path) -> tuple[int, Path] | None:
     return best
 
 
-def train_splat(dataset: Path, out_ply: Path, progress: Progress, steps: int = 12000, max_resolution: int = 1280) -> Path:
-    """Train with Brush. Brush writes `export_<iteration>.ply` every few thousand
-    steps, which doubles as a progress indicator."""
-    brush = find_brush()
-    if not brush:
-        raise ReconstructionError(
-            "The 3D trainer (Brush) is not installed on the server. See the README section 'Real 3D models'."
+class _TrainerFailed(Exception):
+    def __init__(self, code: int, tail: str):
+        super().__init__(tail)
+        self.code, self.tail = code, tail
+
+
+def explain_trainer_failure(code: int, tail: str) -> str:
+    """Turn a crashed trainer into advice a person can follow."""
+    low = tail.lower()
+    if code in (3221225781, 3221225785, -1073741515) or "vcruntime" in low or "msvcp" in low:
+        return (
+            "The 3D trainer could not start because a Windows runtime library is missing. "
+            "Install the 'Microsoft Visual C++ Redistributable (x64)' and process the video again."
         )
+    if any(w in low for w in ("out of memory", "outofmemory", "oom", "allocation", "buffer size", "max_buffer", "device lost")):
+        return (
+            "The graphics card ran out of memory while building the 3D model. Close other programs and process the "
+            "video again. On a 4 GB card, set SPLAT_MAX_SPLATS=300000 and SPLAT_MAX_RESOLUTION=800 in backend/.env."
+        )
+    if any(w in low for w in ("adapter", "no suitable", "vulkan", "dx12", "metal", "surface")):
+        return (
+            "No compatible graphics adapter was found for the 3D trainer. Update the graphics driver and, on a laptop "
+            "with two GPUs, make sure Windows uses the NVIDIA GPU for this app "
+            "(Settings > System > Display > Graphics). Run `python backend/scripts/doctor.py --gpu-test` for details."
+        )
+    snippet = tail.strip().splitlines()[-1][:160] if tail.strip() else f"exit code {code}"
+    return f"The 3D trainer stopped unexpectedly ({snippet})."
+
+
+def _run_brush(brush: str, dataset: Path, out_ply: Path, progress: Progress, steps: int, max_resolution: int, max_splats: int) -> Path:
     export_dir = out_ply.parent / f".{out_ply.stem}_export"
     shutil.rmtree(export_dir, ignore_errors=True)
     export_dir.mkdir(parents=True)
@@ -198,15 +226,22 @@ def train_splat(dataset: Path, out_ply: Path, progress: Progress, steps: int = 1
         brush, str(dataset),
         "--total-steps", str(steps),
         "--max-resolution", str(max_resolution),
+        "--max-splats", str(max_splats),
+        # The browser viewer shows base colour only, so view-dependent colour (spherical
+        # harmonics) would be trained and then thrown away. Skipping it also cuts GPU
+        # memory and time, which matters on a 4 GB laptop card.
+        "--sh-degree", "0",
         "--export-path", str(export_dir),
         "--export-name", "export_{iter}.ply",
         "--export-every", str(every),
     ]
+    env = dict(os.environ)
+    env.setdefault("WGPU_POWER_PREF", "high")  # prefer the discrete GPU on laptops with two
     progress("train", 0.0, "Training the 3D model")
     log_path = dataset.parent / "brush.log"
     started = time.time()
     with open(log_path, "wb") as log:
-        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
         while proc.poll() is None:
             time.sleep(3)
             latest = _latest_export(export_dir)
@@ -217,8 +252,7 @@ def train_splat(dataset: Path, out_ply: Path, progress: Progress, steps: int = 1
                 proc.kill()
                 raise ReconstructionError("The 3D model took too long to train and was stopped.")
     if proc.returncode != 0:
-        tail = log_path.read_text(errors="ignore")[-300:]
-        raise ReconstructionError(f"The 3D trainer failed: {tail.strip()[-200:]}")
+        raise _TrainerFailed(proc.returncode, log_path.read_text(errors="ignore")[-2000:])
 
     latest = _latest_export(export_dir)
     if not latest:
@@ -228,3 +262,38 @@ def train_splat(dataset: Path, out_ply: Path, progress: Progress, steps: int = 1
     shutil.rmtree(export_dir, ignore_errors=True)
     progress("train", 1.0, "3D model ready")
     return out_ply
+
+
+def train_splat(
+    dataset: Path,
+    out_ply: Path,
+    progress: Progress,
+    steps: int = 12000,
+    max_resolution: int = 1280,
+    max_splats: int = 1_000_000,
+) -> Path:
+    """Train with Brush. Brush writes `export_<iteration>.ply` every few thousand
+    steps, which doubles as a progress indicator.
+
+    If the trainer crashes (typically a small GPU running out of memory) it is
+    retried once with much lighter settings before giving up.
+    """
+    brush = find_brush()
+    if not brush:
+        raise ReconstructionError(
+            "The 3D trainer (Brush) is not installed on this computer. Download it from "
+            "https://github.com/ArthurBrussee/brush/releases into backend/tools/ (see the README, 'Real 3D models')."
+        )
+    attempts = [
+        (steps, max_resolution, max_splats),
+        (min(steps, 7000), min(max_resolution, 800), min(max_splats, 300_000)),
+    ]
+    failure: _TrainerFailed | None = None
+    for n, (s, res, splats) in enumerate(attempts):
+        try:
+            return _run_brush(brush, dataset, out_ply, progress, s, res, splats)
+        except _TrainerFailed as exc:
+            failure = exc
+            if n + 1 < len(attempts):
+                progress("train", 0.0, "Retrying with lower graphics-memory settings")
+    raise ReconstructionError(explain_trainer_failure(failure.code, failure.tail))

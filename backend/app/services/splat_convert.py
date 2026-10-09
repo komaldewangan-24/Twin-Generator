@@ -57,6 +57,7 @@ def ply_to_splat(
     min_opacity: float = 0.05,
     max_scale_percentile: float = 99.5,
     max_distance_percentile: float = 99.0,
+    max_count: int | None = 1_000_000,
 ) -> dict:
     """Write a cleaned .splat. Returns counts for logging."""
     d = _read_ply(ply_path)
@@ -83,6 +84,8 @@ def ply_to_splat(
     # Most important first (large and opaque), so partial loads already look right.
     importance = scale[idx].prod(1) * opacity[idx]
     idx = idx[np.argsort(-importance)]
+    if max_count and len(idx) > max_count:
+        idx = idx[:max_count]  # a browser on a small GPU draws about a million splats comfortably
 
     rec = np.zeros(len(idx), dtype=[("p", "<f4", 3), ("s", "<f4", 3), ("c", "u1", 4), ("r", "u1", 4)])
     rec["p"] = pos[idx]

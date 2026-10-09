@@ -147,3 +147,17 @@ def test_scene_exports_a_walkthrough_path_and_start_view():
         assert len(pose["position"]) == 3 and len(pose["forward"]) == 3
         assert abs(sum(v * v for v in pose["forward"]) - 1) < 1e-2   # unit direction
     assert set(scene["start_view"]) == {"position", "forward"}
+
+
+def test_implausible_classes_need_stronger_evidence():
+    """A bean bag mislabelled 'toilet' at ~0.56 must not become an object, while a chair at the
+    same confidence (a normal furniture class) stays."""
+    rec, _ = make_reconstruction()
+    scene = spatial.build_scene(rec)
+
+    def sightings(cls, conf):
+        return [{"cls": cls, "u": 1.0, "v": 1.0, "conf": conf, "frame": f, "world": [0, 0, 0]} for f in "abc"]
+
+    merged = spatial.merge_observations(sightings("toilet", 0.56) + sightings("chair", 0.56), scene)
+    assert {o["class"] for o in merged} == {"chair"}
+    assert {o["class"] for o in spatial.merge_observations(sightings("toilet", 0.85), scene)} == {"toilet"}

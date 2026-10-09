@@ -44,6 +44,13 @@ DEFAULT_MERGE_RADIUS_M = 0.5
 
 MIN_VOTES = 2  # an object must be seen in at least this many frames
 
+# Classes that rarely appear in an ordinary room and are easily confused with other things
+# (a striped rug looks like a bench, a bean bag like a toilet) must score higher on average.
+# Real ones usually do. Everything else only needs the detector's own threshold.
+MIN_CONFIDENCE = {
+    "toilet": 0.70, "bench": 0.65, "sink": 0.60, "refrigerator": 0.55, "oven": 0.60, "microwave": 0.60,
+}
+
 
 @dataclass
 class Scene:
@@ -340,7 +347,7 @@ def merge_observations(observations: list[dict], scene: Scene) -> list[dict]:
                 best["confs"].append(o["conf"])
                 best["frames"].add(o["frame"])
         for c in clusters:
-            if len(c["frames"]) >= MIN_VOTES:
+            if len(c["frames"]) >= MIN_VOTES and float(np.mean(c["confs"])) >= MIN_CONFIDENCE.get(cls, 0.0):
                 objects.append({
                     "class": cls,
                     "x": (c["u"] - u0) * scale,

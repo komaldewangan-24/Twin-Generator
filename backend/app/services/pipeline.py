@@ -68,6 +68,17 @@ def read_progress(project_id: str) -> dict | None:
         return None
 
 
+def _detect(frames_dir: str, recon, scene, progress) -> dict:
+    """Object detection must never cost the user their 3D model. If the detector
+    cannot run (model file missing, ONNX problem...), carry on with an empty
+    object list and record why, so the scan still completes."""
+    try:
+        return detector.run_detection(frames_dir, recon, scene, progress)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Object detection failed; continuing without objects")
+        return detector.empty_result(scene, str(exc))
+
+
 def run_pipeline(project_id: str) -> None:
     def progress(stage: str, fraction: float, message: str) -> None:
         write_progress(project_id, stage, fraction, message)
@@ -99,7 +110,7 @@ def run_pipeline(project_id: str) -> None:
 
         # ---- objects ----------------------------------------------------------
         _set_status(project_id, ProjectStatus.DETECTING)
-        result = detector.run_detection(frames_dir, recon, scene, progress)
+        result = _detect(frames_dir, recon, scene, progress)
         result["meta"]["reconstruction_error"] = recon_error
         with SessionLocal() as db:
             project = db.query(Project).filter(Project.id == project_id).first()
@@ -113,7 +124,12 @@ def run_pipeline(project_id: str) -> None:
             try:
                 dataset = reconstruct.prepare_training_set(recon, images_dir, work)
                 full = Path(storage.splat_path_for(project_id, ".ply"))
-                reconstruct.train_splat(dataset, full, progress, steps=settings.SPLAT_TRAIN_STEPS)
+                reconstruct.train_splat(
+                    dataset, full, progress,
+                    steps=settings.SPLAT_TRAIN_STEPS,
+                    max_resolution=settings.SPLAT_MAX_RESOLUTION,
+                    max_splats=settings.SPLAT_MAX_SPLATS,
+                )
                 # The full training file is 100-200 MB; the viewer needs a cleaned, compact copy.
                 progress("train", 0.99, "Optimising the 3D model for the browser")
                 compact = Path(storage.splat_path_for(project_id, ".splat"))

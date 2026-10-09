@@ -38,6 +38,10 @@ class Settings:
     # Splat training length. More steps = sharper model but longer wait (about 16 min for
     # 12000 on an Apple M4). 7000 is a decent quick preset.
     SPLAT_TRAIN_STEPS: int = int(os.getenv("SPLAT_TRAIN_STEPS") or 12000)
+    # Graphics-memory limits for the trainer. The defaults suit a 6 GB card; a 4 GB laptop
+    # GPU (RTX 3050 / 4050) may need SPLAT_MAX_SPLATS=300000 and SPLAT_MAX_RESOLUTION=800.
+    SPLAT_MAX_SPLATS: int = int(os.getenv("SPLAT_MAX_SPLATS") or 1_000_000)
+    SPLAT_MAX_RESOLUTION: int = int(os.getenv("SPLAT_MAX_RESOLUTION") or 1280)
 
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24
