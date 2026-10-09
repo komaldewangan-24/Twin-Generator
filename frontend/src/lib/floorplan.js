@@ -120,7 +120,7 @@ function dimension(ctx, x1, y1, x2, y2, label, { vertical = false } = {}) {
  *                legacy camera-view mode.
  * @returns hit targets [{x, y, r, cls, confidence}] in canvas px, for tooltips.
  */
-export function drawFloorPlan(ctx, W, H, { detections = [], rooms = [], layout = null, calibration = null, showHeatmap = false, hover = null } = {}) {
+function drawSchematic(ctx, W, H, { detections = [], rooms = [], layout = null, calibration = null, showHeatmap = false, hover = null } = {}) {
   ctx.clearRect(0, 0, W, H)
   ctx.fillStyle = SHEET
   ctx.fillRect(0, 0, W, H)
@@ -297,4 +297,341 @@ export function drawFloorPlan(ctx, W, H, { detections = [], rooms = [], layout =
   ctx.fillText(note, W - 14, H - 14)
 
   return hits
+}
+
+
+// ===========================================================================================
+// Modern floor plan: straight walls, furniture at real size, quiet background, pan and zoom.
+// ===========================================================================================
+
+const PLAN_FONT = '"Hanken Grotesk Variable", system-ui, sans-serif'
+const MONO = '"IBM Plex Mono", monospace'
+
+// Typical footprint in metres [width, depth]. Orientation is not known, so shapes are axis-aligned.
+const METERS = {
+  chair: [0.46, 0.46], couch: [1.9, 0.9], 'dining table': [1.4, 0.85], bed: [2.0, 1.5], 'potted plant': [0.4, 0.4],
+  tv: [1.0, 0.1], sink: [0.6, 0.45], refrigerator: [0.7, 0.7], bench: [1.2, 0.4], microwave: [0.5, 0.4],
+  oven: [0.6, 0.6], toilet: [0.4, 0.7], clock: [0.3, 0.3], door: [0.9, 0.12], window: [1.2, 0.12], light: [0.3, 0.3],
+  counter: [1.8, 0.6], cabinet: [0.9, 0.45], shelf: [0.9, 0.3], picture: [0.6, 0.05], curtain: [1.2, 0.1],
+}
+
+// Colour by what the thing is for, from the app's own palette.
+const GROUPS = [
+  { names: ['chair', 'couch', 'bench', 'bed'], stroke: '#1d55b8', fill: '#dbe6fa' },                     // seating
+  { names: ['dining table', 'counter', 'cabinet', 'shelf'], stroke: '#b23300', fill: '#ffe4d9' },        // surfaces
+  { names: ['tv', 'microwave', 'oven', 'refrigerator', 'sink', 'toilet'], stroke: '#0e1b26', fill: '#e3e9ee' }, // appliances
+  { names: ['potted plant', 'clock', 'picture', 'curtain', 'light', 'window', 'door'], stroke: '#17724f', fill: '#d6efe4' }, // decor
+]
+const groupOf = (cls) => GROUPS.find((g) => g.names.includes(cls)) ?? { stroke: GRAPHITE, fill: '#e9eef1' }
+
+function rrect(ctx, x, y, w, h, r) {
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, Math.min(r, w / 2, h / 2))
+}
+
+/** A small rounded label. */
+function chip(ctx, text, x, y, { align = 'center', bg = '#fff', fg = INK, border = RULE_STRONG, font = `500 11px ${MONO}`, padX = 8, h = 20 } = {}) {
+  ctx.save()
+  ctx.font = font
+  const w = ctx.measureText(text).width + padX * 2
+  const left = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x
+  ctx.shadowColor = 'rgba(14,27,38,0.12)'
+  ctx.shadowBlur = 6
+  ctx.shadowOffsetY = 1
+  rrect(ctx, left, y - h / 2, w, h, h / 2)
+  ctx.fillStyle = bg
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  if (border) { ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.stroke() }
+  ctx.fillStyle = fg
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, left + padX, y + 0.5)
+  ctx.restore()
+  return { left, w }
+}
+
+function furniture(ctx, cls, cx, cy, w, h, { hover = false, selected = false } = {}) {
+  const g = groupOf(cls)
+  ctx.save()
+  ctx.translate(cx, cy)
+  const r = Math.min(w, h) * 0.22
+  ctx.shadowColor = hover || selected ? 'rgba(14,27,38,0.38)' : 'rgba(14,27,38,0.2)'
+  ctx.shadowBlur = hover || selected ? 16 : 9
+  ctx.shadowOffsetY = hover || selected ? 5 : 3
+  ctx.fillStyle = g.fill
+  ctx.strokeStyle = g.stroke
+  ctx.lineWidth = 1.6
+  ctx.lineJoin = 'round'
+
+  const body = () => { rrect(ctx, -w / 2, -h / 2, w, h, r); ctx.fill(); ctx.shadowColor = 'transparent'; ctx.stroke() }
+
+  switch (cls) {
+    case 'potted plant':
+    case 'clock':
+    case 'light': {
+      ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.shadowColor = 'transparent'; ctx.stroke()
+      ctx.lineWidth = 1.2
+      ctx.beginPath()
+      if (cls === 'potted plant') for (let i = 0; i < 6; i++) { const a = (i * Math.PI) / 3; ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * w * 0.38, Math.sin(a) * h * 0.38) }
+      else { ctx.moveTo(0, 0); ctx.lineTo(0, -h * 0.3); ctx.moveTo(0, 0); ctx.lineTo(w * 0.22, h * 0.1) }
+      ctx.stroke()
+      break
+    }
+    case 'tv': {
+      rrect(ctx, -w / 2, -h / 2, w, h, h / 2); ctx.fillStyle = INK; ctx.fill(); ctx.shadowColor = 'transparent'; ctx.stroke()
+      break
+    }
+    case 'chair': {
+      body()
+      ctx.fillStyle = g.stroke
+      rrect(ctx, -w / 2 + 1, -h / 2 + 1, w - 2, Math.max(4, h * 0.2), 2); ctx.fill()   // the back rest
+      break
+    }
+    case 'couch': {
+      body()
+      ctx.fillStyle = g.stroke
+      rrect(ctx, -w / 2 + 1, -h / 2 + 1, w - 2, h * 0.26, 3); ctx.fill()                  // back
+      rrect(ctx, -w / 2 + 1, -h / 2 + 1, w * 0.1, h - 2, 3); ctx.fill()                   // arms
+      rrect(ctx, w / 2 - 1 - w * 0.1, -h / 2 + 1, w * 0.1, h - 2, 3); ctx.fill()
+      break
+    }
+    case 'bed': {
+      body()
+      ctx.fillStyle = '#fff'
+      rrect(ctx, -w / 2 + w * 0.06, -h / 2 + h * 0.08, w * 0.4, h * 0.22, 3); ctx.fill(); ctx.stroke()   // pillows
+      rrect(ctx, w / 2 - w * 0.46, -h / 2 + h * 0.08, w * 0.4, h * 0.22, 3); ctx.fill(); ctx.stroke()
+      break
+    }
+    case 'dining table':
+    case 'counter': {
+      body()
+      ctx.lineWidth = 1
+      rrect(ctx, -w / 2 + w * 0.1, -h / 2 + h * 0.14, w * 0.8, h * 0.72, r * 0.6); ctx.stroke()
+      break
+    }
+    default: {
+      body()
+      ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(-w * 0.25, 0); ctx.lineTo(w * 0.25, 0); ctx.stroke()
+    }
+  }
+
+  if (selected) {
+    ctx.shadowColor = 'transparent'
+    ctx.strokeStyle = FLAG
+    ctx.lineWidth = 3
+    rrect(ctx, -w / 2 - 5, -h / 2 - 5, w + 10, h + 10, r + 4)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+function polygonArea(poly) {
+  let a = 0
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i]
+    const [x2, y2] = poly[(i + 1) % poly.length]
+    a += x1 * y2 - x2 * y1
+  }
+  return Math.abs(a) / 2
+}
+
+export const DEFAULT_VIEW = { k: 1, tx: 0, ty: 0 }
+
+/**
+ * Modern plan. World coordinates are metres with the room's corner at (0, 0).
+ * `view` is the user's zoom/pan on top of an automatic fit. Returns hit targets in canvas pixels.
+ */
+function drawModern(ctx, W, H, {
+  detections = [], rooms = [], layout, showHeatmap = false, showPath = false, showLabels = false,
+  view = DEFAULT_VIEW, hover = null, selected = null,
+} = {}) {
+  const fac = layout.scale_factor ?? 1
+  const rw = layout.width_m
+  const rd = layout.depth_m
+  const estimated = layout.source !== 'user'
+  const pts = []
+  for (const d of detections) (d.positions ?? []).forEach((p, idx) => pts.push({ cls: d.class, idx, x: p.x * fac, z: p.z * fac, confidence: p.confidence }))
+  const path = layout.camera_path ?? []
+
+  // Walls: a clean rectangle when it describes the room well, otherwise the scanned outline.
+  const hull = layout.polygon ?? []
+  const useHull = hull.length > 2 && polygonArea(hull) / (rw * rd) < 0.6
+  const outline = useHull ? hull : [[0, 0], [rw, 0], [rw, rd], [0, rd]]
+
+  // Fit the room (and any object outside it) into the canvas, leaving room for the dimension lines.
+  const xs = [0, rw, ...pts.map((p) => p.x), ...(showPath ? path.map((p) => p[0]) : [])]
+  const zs = [0, rd, ...pts.map((p) => p.z), ...(showPath ? path.map((p) => p[1]) : [])]
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs)
+  const padL = 74, padR = 36, padT = 78, padB = 64
+  const m2px0 = Math.min((W - padL - padR) / (maxX - minX), (H - padT - padB) / (maxZ - minZ))
+  const ox0 = padL + (W - padL - padR - (maxX - minX) * m2px0) / 2
+  const oy0 = padT + (H - padT - padB - (maxZ - minZ) * m2px0) / 2
+  const m2px = m2px0 * view.k
+  const P = (x, z) => [(ox0 + (x - minX) * m2px0) * view.k + view.tx, (oy0 + (z - minZ) * m2px0) * view.k + view.ty]
+
+  // background with a quiet dot grid every half metre
+  ctx.clearRect(0, 0, W, H)
+  ctx.fillStyle = '#eef2f5'
+  ctx.fillRect(0, 0, W, H)
+  const step = 0.5 * m2px
+  if (step > 8) {
+    const [gx, gy] = P(0, 0)
+    ctx.fillStyle = '#c3cdd5'
+    for (let x = gx % step; x < W; x += step) for (let y = gy % step; y < H; y += step) ctx.fillRect(x - 0.75, y - 0.75, 1.5, 1.5)
+  }
+
+  const tracePath = (poly) => {
+    ctx.beginPath()
+    poly.forEach(([x, z], i) => { const [px, py] = P(x, z); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py) })
+    ctx.closePath()
+  }
+
+  // floor, with a soft shadow so the room lifts off the page
+  ctx.save()
+  ctx.shadowColor = 'rgba(14,27,38,0.2)'
+  ctx.shadowBlur = 30
+  ctx.shadowOffsetY = 10
+  tracePath(outline)
+  ctx.fillStyle = '#fffdf9'
+  ctx.fill()
+  ctx.restore()
+
+  // everything inside the room is clipped to it
+  ctx.save()
+  tracePath(outline)
+  ctx.clip()
+
+  // faint area figure behind the furniture
+  const [cX, cY] = P(rw / 2, rd / 2)
+  ctx.fillStyle = 'rgba(14,27,38,0.06)'
+  ctx.font = `700 ${Math.max(26, Math.min(90, m2px * 0.8))}px ${PLAN_FONT}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(`${estimated ? '~' : ''}${layout.area_m2} m²`, cX, cY)
+
+  if (showHeatmap) {
+    for (const p of pts) {
+      const [x, y] = P(p.x, p.z)
+      const radius = 1.1 * m2px
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, radius)
+      gr.addColorStop(0, 'rgba(255,90,31,0.38)')
+      gr.addColorStop(1, 'rgba(255,90,31,0)')
+      ctx.fillStyle = gr
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2)
+    }
+  }
+
+  // zones as soft tinted areas
+  const ZONE_TINTS = ['rgba(29,85,184,0.07)', 'rgba(255,90,31,0.08)', 'rgba(23,114,79,0.08)']
+  rooms.forEach((room, i) => {
+    const [x1, z1, x2, z2] = room.bounds
+    const pad = 0.3
+    const [ax, ay] = P(x1 - pad, z1 - pad)
+    const [bx, by] = P(x2 + pad, z2 + pad)
+    rrect(ctx, ax, ay, bx - ax, by - ay, 14)
+    ctx.fillStyle = ZONE_TINTS[i % ZONE_TINTS.length]
+    ctx.fill()
+    ctx.setLineDash([6, 5])
+    ctx.strokeStyle = 'rgba(14,27,38,0.35)'
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+    ctx.setLineDash([])
+  })
+
+  if (showPath && path.length > 1) {
+    ctx.save()
+    ctx.strokeStyle = 'rgba(255,90,31,0.55)'
+    ctx.lineWidth = 2
+    ctx.lineCap = 'round'
+    ctx.setLineDash([1, 7])
+    ctx.beginPath()
+    const q = path.map(([x, z]) => P(x, z))
+    ctx.moveTo(q[0][0], q[0][1])
+    for (let i = 1; i < q.length - 1; i++) ctx.quadraticCurveTo(q[i][0], q[i][1], (q[i][0] + q[i + 1][0]) / 2, (q[i][1] + q[i + 1][1]) / 2)
+    ctx.lineTo(q[q.length - 1][0], q[q.length - 1][1])
+    ctx.stroke()
+    ctx.restore()
+    ctx.fillStyle = FLAG
+    ctx.beginPath(); ctx.arc(q[0][0], q[0][1], 5, 0, Math.PI * 2); ctx.fill()
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke()
+  }
+
+  // furniture at real size
+  const hits = []
+  for (const p of pts) {
+    const [mw, md] = METERS[p.cls] ?? [0.5, 0.5]
+    const w = Math.max(mw * m2px, 20)
+    const h = Math.max(md * m2px, p.cls === 'tv' ? 8 : 20)
+    const [x, y] = P(p.x, p.z)
+    const isHover = hover && hover.cls === p.cls && hover.idx === p.idx
+    const isSel = selected && selected.cls === p.cls && selected.idx === p.idx
+    furniture(ctx, p.cls, x, y, w, h, { hover: !!isHover, selected: !!isSel })
+    hits.push({ x, y, hh: h / 2, r: Math.max(w, h) / 2 + 8, cls: p.cls, idx: p.idx, confidence: p.confidence, wx: p.x, wz: p.z })
+  }
+  ctx.restore() // end of the room clip
+
+  // walls on top: thick, round-cornered, dark ink
+  tracePath(outline)
+  ctx.strokeStyle = INK
+  ctx.lineWidth = Math.max(5, Math.min(14, m2px * 0.1))
+  ctx.lineJoin = 'round'
+  ctx.stroke()
+
+  // object names: always on request, otherwise only the one you are pointing at or have selected
+  for (const h of hits) {
+    const isHover = hover && hover.cls === h.cls && hover.idx === h.idx
+    const isSel = selected && selected.cls === h.cls && selected.idx === h.idx
+    if (!(showLabels || isHover || isSel)) continue
+    chip(ctx, classNameFor(h.cls), h.x, h.y + h.hh + 16, { font: `600 12px ${PLAN_FONT}`, bg: isSel ? FLAG : '#fff', fg: INK, border: isSel ? INK : RULE_STRONG, h: 22 })
+  }
+
+  // dimension lines in the margin, with the size in a chip
+  const [x0, y0] = P(0, 0)
+  const [x1, y1] = P(rw, rd)
+  const dimLine = (ax, ay, bx, by, label, vertical) => {
+    ctx.save()
+    ctx.strokeStyle = GRAPHITE
+    ctx.lineWidth = 1.2
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by)
+    const cap = 6
+    if (vertical) { ctx.moveTo(ax - cap, ay); ctx.lineTo(ax + cap, ay); ctx.moveTo(bx - cap, by); ctx.lineTo(bx + cap, by) }
+    else { ctx.moveTo(ax, ay - cap); ctx.lineTo(ax, ay + cap); ctx.moveTo(bx, by - cap); ctx.lineTo(bx, by + cap) }
+    ctx.stroke()
+    ctx.restore()
+    chip(ctx, label, (ax + bx) / 2, (ay + by) / 2)
+  }
+  const tilde = estimated ? '~' : ''
+  dimLine(x0, Math.max(30, y0 - 34), x1, Math.max(30, y0 - 34), `${tilde}${rw.toFixed(1)} m`, false)
+  dimLine(Math.max(30, x0 - 36), y0, Math.max(30, x0 - 36), y1, `${tilde}${rd.toFixed(1)} m`, true)
+
+  // scale bar and the honest note
+  const bar = [0.5, 1, 2, 5].find((m) => m * m2px >= 70) ?? 5
+  const bx = 22
+  const by = H - 26
+  ctx.save()
+  ctx.strokeStyle = INK
+  ctx.lineWidth = 2
+  ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + bar * m2px, by); ctx.moveTo(bx, by - 5); ctx.lineTo(bx, by + 5); ctx.moveTo(bx + bar * m2px, by - 5); ctx.lineTo(bx + bar * m2px, by + 5); ctx.stroke()
+  ctx.restore()
+  chip(ctx, `${bar} m`, bx + (bar * m2px) / 2, by - 16, { h: 18, font: `500 10px ${MONO}`, padX: 6 })
+  chip(ctx, estimated ? 'Scale estimated from camera height' : 'Scale from your measurement', W - 16, H - 22, { align: 'right', h: 22, font: `500 10px ${MONO}`, fg: GRAPHITE })
+
+  return hits
+}
+
+const CLASS_NAMES = {
+  chair: 'Chair', couch: 'Couch', 'dining table': 'Table', bed: 'Bed', 'potted plant': 'Plant', tv: 'TV', sink: 'Sink',
+  refrigerator: 'Fridge', bench: 'Bench', microwave: 'Microwave', oven: 'Oven', toilet: 'Toilet', clock: 'Clock',
+  door: 'Door', window: 'Window', light: 'Light', counter: 'Counter', cabinet: 'Cabinet', shelf: 'Shelf', picture: 'Picture', curtain: 'Curtain',
+}
+const classNameFor = (c) => CLASS_NAMES[c] ?? c.charAt(0).toUpperCase() + c.slice(1)
+
+/**
+ * Draws the plan. With a 3D layout (metres) it is the modern plan; without one (no camera path)
+ * it falls back to the schematic of camera-view positions.
+ */
+export function drawFloorPlan(ctx, W, H, options = {}) {
+  return options.layout ? drawModern(ctx, W, H, options) : drawSchematic(ctx, W, H, options)
 }

@@ -35,7 +35,6 @@ export default function ProjectDetail() {
   const [uploadProgress, setUploadProgress] = useState(null)
   const [splatProgress, setSplatProgress] = useState(null)
   const [showReplace, setShowReplace] = useState(false)
-  const [showHeatmap, setShowHeatmap] = useState(false)
   const [reportBusy, setReportBusy] = useState(false)
   const [error, setError] = useState('')
   const [notFound, setNotFound] = useState(false)
@@ -297,17 +296,11 @@ export default function ProjectDetail() {
                     {tab === 'objects' && <ObjectsTab detections={detections} meta={objects?.meta} onShow3D={project.has_splat ? showIn3D : null} />}
                     {tab === 'floor' && (
                       <section className="sheet p-5">
-                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                          <h2 className="text-2xl font-semibold">Floor plan</h2>
-                          <label className="flex cursor-pointer items-center gap-2 text-sm">
-                            <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="h-4 w-4 accent-flag" />
-                            Show where objects cluster
-                          </label>
-                        </div>
-                        <FloorPlan analytics={analytics} detections={detections} showHeatmap={showHeatmap} onSelect={project.has_splat ? showIn3D : undefined} />
+                        <h2 className="mb-4 text-2xl font-semibold">Floor plan</h2>
+                        <FloorPlan analytics={analytics} detections={detections} onSelect={project.has_splat ? showIn3D : undefined} />
                         <p className="mt-4 border-l-2 border-flag pl-3 text-sm text-graphite">
                           {analytics?.layout
-                            ? 'Objects are placed on the floor in 3D from your video, so distances are real-world estimates. Sizes assume the phone was held at about 1.4 m: enter a measured size on the Analytics tab to correct them. Dashed boxes are zones of nearby objects; the dotted line is where the phone walked.'
+                            ? 'Objects are placed on the floor in 3D from your video and drawn at typical sizes, so distances are real-world estimates. Walls are fitted as a rectangle. Sizes assume the phone was held at about 1.4 m: enter a measured size on the Analytics tab to correct them. Click an object for details.'
                             : 'This is a schematic. No camera path was found, so positions come from where objects appear in the camera view: the plan shows how things relate to each other, not exact distances. Dashed boxes are zones of nearby objects.'}
                         </p>
                       </section>

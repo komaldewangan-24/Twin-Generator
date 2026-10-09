@@ -90,7 +90,7 @@ export async function downloadReport({ project, detections, meta, analytics }) {
   const cv = document.createElement('canvas')
   const cw2 = 1100, ch2 = 750
   cv.width = cw2; cv.height = ch2
-  drawFloorPlan(cv.getContext('2d'), cw2, ch2, { detections, rooms: analytics?.rooms?.details ?? [], layout: analytics?.layout ?? null, calibration: cal ?? null })
+  drawFloorPlan(cv.getContext('2d'), cw2, ch2, { detections, rooms: analytics?.rooms?.details ?? [], layout: analytics?.layout ?? null, calibration: cal ?? null, showLabels: true })
   const imgW = W - 2 * M
   const imgH = (imgW * ch2) / cw2
   ensure(imgH + 16) // heading and drawing stay together on one page
