@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import ErrorBoundary from '../ErrorBoundary'
 import SplatViewer, { ORIENTATIONS, frameScene } from '../SplatViewer'
+import StructureView from '../StructureView'
 import Pins from '../Pins'
 import { flyToObject, playTour } from '../../lib/camera'
 import { Corners, Icon, Spinner } from '../ui'
 
-export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress, onAttach, onDemo, building, progress, error, up, pins = [], focus, tour, unitsPerMeter = 1 }) {
+const btn = 'btn btn-ghost-dark !px-3 !py-2 backdrop-blur'
+
+export default function ViewerTab({
+  splatUrl, splatExt, startView, splatProgress, onAttach, onDemo, building, progress, error, up,
+  pins = [], focus, tour, unitsPerMeter = 1, structureUrl, recon,
+}) {
   const stage = useRef(null)
   const fileInput = useRef(null)
   const viewer = useRef(null)
@@ -15,7 +21,13 @@ export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress
   const [showPins, setShowPins] = useState(true)
   const [touring, setTouring] = useState(false)
   const [selected, setSelected] = useState(null)
+  const [choice, setChoice] = useState(null)       // 'photo' | 'structure' once the user picks
+  const [resetKey, setResetKey] = useState(0)      // bumps to re-frame the structure view
   const stopMotion = useRef(() => {})
+
+  const hasPhoto = !!splatUrl
+  const hasStructure = !!structureUrl
+  const mode = choice ?? (hasPhoto ? 'photo' : 'structure')
 
   // When the camera path gave us a reliable "up", offer it first and use it by default.
   const options = up ? [{ id: 'auto', label: 'Auto', up }, ...ORIENTATIONS] : ORIENTATIONS
@@ -28,9 +40,15 @@ export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress
   }
   useEffect(() => () => stopMotion.current(), [])
 
+  const chooseMode = (next) => {
+    halt()
+    setReady(false)
+    setChoice(next)
+  }
+
   // "Show in 3D" from the objects list, floor plan or assistant: fly to that object.
   useEffect(() => {
-    if (!focus || !ready) return
+    if (!focus || !ready || mode !== 'photo') return
     const pin = pins.find((p) => p.id === focus.id)
     if (!pin) return
     stopMotion.current()
@@ -55,40 +73,99 @@ export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress
     setFull(!!document.fullscreenElement)
   }
 
-  if (splatUrl) {
+  const attachInput = (
+    <input ref={fileInput} type="file" accept=".ply,.splat,.spz" hidden onChange={(e) => { onAttach(e.target.files?.[0]); e.target.value = '' }} />
+  )
+
+  // ---- something to show: the photoreal model, the structure recovered from the video, or both
+  if (hasPhoto || hasStructure) {
     return (
-      <div ref={stage} onPointerDownCapture={(e) => { if (!e.target.closest?.("button")) halt() }} className="relative h-[min(72vh,640px)] min-h-[360px] overflow-hidden rounded-[3px] border border-ink bg-viewport">
-        <ErrorBoundary title="The 3D viewer hit an error">
-          <SplatViewer url={splatUrl} ext={splatExt} up={o.up} startView={o.id === 'auto' ? startView : undefined} onLoad={(v) => { viewer.current = v; setReady(true) }} />
-        </ErrorBoundary>
+      <div
+        ref={stage}
+        onPointerDownCapture={(e) => { if (!e.target.closest?.('button')) halt() }}
+        className="relative h-[min(72vh,640px)] min-h-[360px] overflow-hidden rounded-[3px] border border-ink bg-viewport"
+      >
+        {mode === 'photo' && hasPhoto ? (
+          <ErrorBoundary title="The 3D viewer hit an error">
+            <SplatViewer url={splatUrl} ext={splatExt} up={o.up} startView={o.id === 'auto' ? startView : undefined} onLoad={(v) => { viewer.current = v; setReady(true) }} />
+          </ErrorBoundary>
+        ) : (
+          <ErrorBoundary title="The 3D structure view hit an error">
+            <StructureView url={structureUrl} recon={recon} pins={pins} showPins={showPins} resetKey={resetKey} />
+          </ErrorBoundary>
+        )}
         <Corners className="text-paper/40" />
-        {ready && showPins && pins.length > 0 && <Pins viewerRef={viewer} pins={pins} selectedId={selected} onPick={(pin) => { halt(); setSelected(pin.id); stopMotion.current = flyToObject(viewer.current, pin.world, o.up, unitsPerMeter) }} />}
+        {mode === 'photo' && ready && showPins && pins.length > 0 && (
+          <Pins viewerRef={viewer} pins={pins} selectedId={selected} onPick={(pin) => { halt(); setSelected(pin.id); stopMotion.current = flyToObject(viewer.current, pin.world, o.up, unitsPerMeter) }} />
+        )}
+
+        {hasPhoto && hasStructure && (
+          <div role="group" aria-label="What to show" className="absolute left-4 top-4 z-20 flex overflow-hidden rounded-[3px] border border-viewport-line backdrop-blur">
+            {[['photo', 'Photoreal'], ['structure', 'Structure']].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => chooseMode(id)}
+                aria-pressed={mode === id}
+                className={`px-3 py-2 font-display text-sm font-semibold transition ${mode === id ? 'bg-flag text-ink' : 'bg-viewport/60 text-[#c7d4de] hover:text-paper'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="absolute right-4 top-4 z-20 flex flex-wrap justify-end gap-2">
-          {tour?.length > 1 && (
+          {mode === 'photo' && tour?.length > 1 && (
             <button onClick={toggleTour} className={`btn !px-3 !py-2 backdrop-blur ${touring ? 'btn-flag' : 'btn-ghost-dark'}`} aria-pressed={touring}>
               {touring ? '■ Stop walkthrough' : '▶ Walkthrough'}
             </button>
           )}
           {pins.length > 0 && (
-            <button onClick={() => setShowPins((v) => !v)} className="btn btn-ghost-dark !px-3 !py-2 backdrop-blur" aria-pressed={showPins}>
+            <button onClick={() => setShowPins((v) => !v)} className={btn} aria-pressed={showPins}>
               Labels: {showPins ? 'on' : 'off'}
             </button>
           )}
-          <button onClick={() => { halt(); setOrient((orient + 1) % options.length) }} className="btn btn-ghost-dark !px-3 !py-2 backdrop-blur" title="If the room looks sideways or upside down, try another orientation">
-            Orientation: {o.label}
-          </button>
-          <button onClick={() => { halt(); setSelected(null); frameScene(viewer.current, o.up, o.id === 'auto' ? startView : undefined) }} className="btn btn-ghost-dark !px-3 !py-2 backdrop-blur">Reset view</button>
-          <button onClick={toggleFull} className="btn btn-ghost-dark !px-3 !py-2 backdrop-blur" aria-label={full ? 'Exit fullscreen' : 'Enter fullscreen'}>
+          {mode === 'photo' ? (
+            <>
+              <button onClick={() => { halt(); setOrient((orient + 1) % options.length) }} className={btn} title="If the room looks sideways or upside down, try another orientation">
+                Orientation: {o.label}
+              </button>
+              <button onClick={() => { halt(); setSelected(null); frameScene(viewer.current, o.up, o.id === 'auto' ? startView : undefined) }} className={btn}>Reset view</button>
+            </>
+          ) : (
+            <button onClick={() => setResetKey((k) => k + 1)} className={btn}>Reset view</button>
+          )}
+          <button onClick={toggleFull} className={btn} aria-label={full ? 'Exit fullscreen' : 'Enter fullscreen'}>
             <Icon.expand /> {full ? 'Exit' : 'Fullscreen'}
           </button>
         </div>
+
+        {!hasPhoto && (
+          <div className="absolute inset-x-4 bottom-12 z-20 mx-auto max-w-xl rounded-[3px] border border-viewport-line bg-viewport/85 p-3 text-center text-sm text-[#c7d4de] backdrop-blur" role="status">
+            {building ? (
+              <>
+                This is the 3D structure already recovered from your video. The photoreal model is still training
+                {progress?.stage === 'train' ? ` (${Math.round(progress.fraction * 100)}%)` : ''} and will appear here.
+              </>
+            ) : (
+              <>
+                The photoreal model could not be built{error ? `: ${error}` : '.'} This is the 3D structure recovered from your video.
+                {' '}Run <span className="font-mono">python backend/scripts/doctor.py --gpu-test</span> to find out why, or{' '}
+                <button className="underline decoration-flag decoration-2 underline-offset-4" onClick={() => fileInput.current?.click()}>attach a model you trained elsewhere</button>.
+              </>
+            )}
+            {splatProgress != null && <span className="figure ml-2">{splatProgress}%</span>}
+          </div>
+        )}
         <p className="label pointer-events-none absolute bottom-4 left-5 z-20 !text-[#7e92a2]">
           Drag to orbit · Scroll to zoom · Right-drag to pan
         </p>
+        {attachInput}
       </div>
     )
   }
 
+  // ---- nothing to show yet
   if (building) {
     const pct = progress?.stage === 'train' ? Math.round(progress.fraction * 100) : null
     return (
@@ -140,7 +217,7 @@ export default function ViewerTab({ splatUrl, splatExt, startView, splatProgress
             <p className="figure mt-2 text-sm text-[#9db0be]">{splatProgress}%</p>
           </div>
         )}
-        <input ref={fileInput} type="file" accept=".ply,.splat,.spz" hidden onChange={(e) => { onAttach(e.target.files?.[0]); e.target.value = '' }} />
+        {attachInput}
       </div>
     </div>
   )

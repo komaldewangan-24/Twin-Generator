@@ -79,7 +79,10 @@ export default function ProjectDetail() {
         const { data } = await api.get(`/projects/${id}/status`)
         setProgress(data.progress)
         setProject((prev) => ({ ...prev, status: data.status, error_message: data.error_message, frame_count: data.frame_count }))
-        if (data.status === 'TRAINING_3D' && data.has_detections && !objectsRef.current) fetchData()
+        if (data.status === 'TRAINING_3D' && data.has_detections && !objectsRef.current) {
+          fetchData()
+          fetchProject() // the 3D structure file exists by now
+        }
         if (data.status === 'DONE') {
           clearInterval(timer)
           fetchProject()
@@ -181,6 +184,7 @@ export default function ProjectDetail() {
 
   const splatName = project?.has_splat ? `model${project.splat_ext}` : null
   const splatUrl = useFileUrl(id, splatName)
+  const structureUrl = useFileUrl(id, project?.has_structure ? 'structure.points' : null)
 
   if (notFound) {
     return (
@@ -288,7 +292,7 @@ export default function ProjectDetail() {
                 ) : (
                   <ErrorBoundary title="This tab hit an error">
                     {tab === 'viewer' && (
-                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={openDemo} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={recon?.meters_per_unit ? 1 / recon.meters_per_unit : 1} />
+                      <ViewerTab splatUrl={splatUrl} splatExt={project.splat_ext} splatProgress={splatProgress} onAttach={attachSplat} onDemo={openDemo} building={training} progress={progress} error={objects?.meta?.splat_error} up={recon?.up} startView={recon?.start_view} structureUrl={structureUrl} recon={recon} pins={pins} focus={focus} tour={recon?.tour} unitsPerMeter={recon?.meters_per_unit ? 1 / recon.meters_per_unit : 1} />
                     )}
                     {tab === 'objects' && <ObjectsTab detections={detections} meta={objects?.meta} onShow3D={project.has_splat ? showIn3D : null} />}
                     {tab === 'floor' && (

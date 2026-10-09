@@ -216,6 +216,8 @@ For a good model: walk slowly in a loop around the room's edge, keep lighting ev
 
 You can still attach a splat trained elsewhere (Luma, Polycam, KIRI Engine) on the 3D tab for older scans.
 
+**Two ways to see the 3D result.** *Photoreal* is the trained Gaussian splat (needs the trainer and a GPU). *Structure* shows the 3D geometry recovered from your video itself: the colored point cloud, the room box, the camera path with a camera icon at each pose, and the detected objects. It needs no GPU and is available as soon as the camera path is solved, so it also shows while the photoreal model trains, and it remains if training fails.
+
 **Interacting with the model:** orbit, zoom and fullscreen; **Walkthrough** replays the path you filmed; labels float on detected objects; "Show in 3D" in the Objects tab, the floor plan and the assistant flies to an object.
 
 **Viewer note:** cross-origin isolation headers (`COOP`/`COEP`) are not enabled in the dev server, so the viewer sets `sharedMemoryForWorkers: false`. Without that, the splat sort worker silently fails and the canvas stays blank.
