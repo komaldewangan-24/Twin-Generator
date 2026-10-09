@@ -65,12 +65,8 @@ Uploads, extracted frames, previews and splats live under `backend/storage/` and
 
 - **Python 3.11+** (developed and tested on 3.13)
 - **Node.js 20.19+ or 22.12+** (required by Vite 8; developed on 22)
-- **FFmpeg** available on your `PATH`
-  - Windows: `winget install Gyan.FFmpeg`
-  - macOS: `brew install ffmpeg`
-  - Linux: `sudo apt install ffmpeg`
-
-  The backend also auto-discovers common WinGet install locations if `ffmpeg` is not on `PATH`.
+- **A graphics card with Vulkan, DirectX 12 or Metal** for the 3D trainer (NVIDIA is not required). Everything except the 3D model also works without one.
+- FFmpeg is bundled (installed by `pip` through `imageio-ffmpeg`); you do not need to install it.
 
 ---
 
@@ -78,46 +74,38 @@ Uploads, extracted frames, previews and splats live under `backend/storage/` and
 
 ### 1. Backend
 
-```bash
+**Windows** (PowerShell, from the project folder):
+
+```powershell
 cd backend
 python -m venv venv
-
-# Windows
 venv\Scripts\activate
-# macOS / Linux
-source venv/bin/activate
-
 pip install -r requirements.txt
+python scripts/install_brush.py        # the 3D trainer (about 160 MB, checksum-verified)
+python scripts/setup_detector.py       # the object detector model (one-time export, a few minutes)
+copy .env.example .env                 # then open .env and set JWT_SECRET_KEY to a long random string
+python scripts/doctor.py --gpu-test    # checks everything and tests your graphics card
+uvicorn app.main:app --port 8000
 ```
 
-**Model weights.** The detector needs `backend/models/yolov8s.onnx` (or `yolov8n.onnx`). Model files are intentionally not committed to this repository, so export it once. `ultralytics` is deliberately not in `requirements.txt` (it pulls in torch and pins `numpy<2` on macOS), so use a throwaway environment:
+**macOS / Linux:**
 
 ```bash
-python -m venv /tmp/export-venv && source /tmp/export-venv/bin/activate
-pip install ultralytics onnx
-yolo export model=yolov8s.pt format=onnx      # or yolov8n.pt for a smaller, less accurate model
-mkdir -p backend/models && cp yolov8s.onnx backend/models/
-```
-
-The API then runs on ONNX Runtime (CPU), which is the tested path. If you do install `ultralytics` into the main environment, `detector.py` will use it instead.
-
-**FFmpeg** must be on your `PATH`, or set `FFMPEG_PATH` to the binary.
-
-**Configure environment:**
-
-```bash
-cp .env.example .env
-```
-
-`DATABASE_URL` is optional: leaving it empty creates a local SQLite database at `backend/storage/database.db`. Set `JWT_SECRET_KEY` to a long random value (`openssl rand -hex 32`); if it is left empty the app falls back to an insecure development key.
-
-**Run:**
-
-```bash
-uvicorn app.main:app --reload --port 8000
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python scripts/install_brush.py
+python scripts/setup_detector.py
+cp .env.example .env                   # then set JWT_SECRET_KEY (openssl rand -hex 32)
+python scripts/doctor.py --gpu-test
+uvicorn app.main:app --port 8000
 ```
 
 API docs: http://localhost:8000/docs
+
+Model files and the trainer are large, so they are not in git. `setup_detector.py` runs the heavy exporter (ultralytics and PyTorch) in a temporary environment that is deleted afterwards; the app itself only needs the small ONNX file. If you skip it, scans still get a 3D model but no object detection. If you skip `install_brush.py`, scans get objects and a floor plan but no 3D model (use the demo scan, below).
+
+`DATABASE_URL` is optional: leaving it empty creates a local SQLite database at `backend/storage/database.db`. Set `JWT_SECRET_KEY` to a long random value; if it is left empty the app falls back to an insecure development key.
 
 ### 2. Frontend
 
@@ -127,9 +115,13 @@ npm install
 npm run dev
 ```
 
-App: http://localhost:5173
+App: http://localhost:5173 (any other local port works too).
 
 The frontend calls the API at `http://localhost:8000` by default. Set `VITE_API_URL` (for example in `frontend/.env.local`) to point it elsewhere.
+
+### 3. See it working in one minute
+
+Sign up, then press **Demo scan** on the dashboard. It adds a ready-made room with a 3D model, detected objects, floor plan, analytics and an assistant to talk to, with no trainer, GPU or video needed.
 
 ---
 
@@ -163,10 +155,31 @@ All project endpoints require `Authorization: Bearer <token>`.
 | GET    | `/projects/{id}/analytics`        | Rooms, capacity, area (optional `?room_width_m=`) |
 | POST   | `/projects/{id}/ask`              | Ask a question about the space |
 | POST   | `/projects/{id}/splat`            | Attach a trained splat file (field `file`) |
-| POST   | `/projects/{id}/splat/demo`       | Attach `storage/splats/demo.splat` if you provide one |
+| POST   | `/projects/demo`                  | Add the bundled demo scan (3D model, objects, plan) to your account |
 | POST   | `/files/token`                    | Short-lived token for `/files/{id}/preview.jpg` and `/files/{id}/model.ply` |
 
 Health check: `GET /health`
+
+---
+
+## If the 3D model does not show up
+
+Run the doctor first. It checks everything and says exactly what to fix:
+
+```bash
+python backend/scripts/doctor.py --gpu-test
+```
+
+The usual causes, in order of how often they happen:
+
+1. **The 3D trainer (Brush) is not installed.** It is a separate download (see "Getting started" above). Without it a new video still gives objects, floor plan and analytics, but the 3D tab says no model could be built.
+2. **The graphics card ran out of memory** (common on 4 GB laptop GPUs such as the RTX 3050). The app retries once with lighter settings by itself. To start light every time, put this in `backend/.env`: `SPLAT_MAX_SPLATS=300000` and `SPLAT_MAX_RESOLUTION=800`.
+3. **Windows picked the wrong GPU** on a laptop with two (Intel/AMD plus NVIDIA). Open Windows *Settings > System > Display > Graphics*, add `chrome.exe` (or Edge) and `python.exe`, and set both to *High performance*. In Chrome also turn on *Settings > System > Use graphics acceleration*, then check `chrome://gpu` says WebGL2 is hardware accelerated.
+4. **Missing runtime on Windows.** Install the *Microsoft Visual C++ Redistributable (x64)*.
+5. **Non-English characters in the folder path** (for example a user name with an accent). Move the project to a folder like `C:\twin`.
+6. **The object detector model is missing.** Objects are skipped but the 3D model still builds. Export it once (see "Model weights").
+
+**No GPU, or no time to train? Use the demo scan.** On the dashboard press **Demo scan**. It adds a ready-made room (3D model, objects, floor plan, analytics and assistant) that works on any computer with no trainer and no video. It comes from a public sample (see `backend/demo/README.md`); make one from your own scan with `python backend/scripts/export_demo.py <project-id>`.
 
 ---
 
@@ -192,7 +205,7 @@ The model only ever sees the scan's structured data (object counts and positions
 Each upload builds its own Gaussian splat. This needs two things beyond `pip install`:
 
 1. `pycolmap` (already in `requirements.txt`): camera positions. Runs on CPU, about 3 minutes for 200 frames.
-2. **Brush**, the splat trainer. Download the release for your OS from <https://github.com/ArthurBrussee/brush/releases> and unpack it under `backend/tools/` (for example `backend/tools/brush-app-aarch64-apple-darwin/brush_app`). The app finds it there, or set `BRUSH_PATH`. Brush needs a GPU with Metal, Vulkan or DX12 but **not** NVIDIA.
+2. **Brush**, the splat trainer. `python backend/scripts/install_brush.py` downloads the right build for your OS from <https://github.com/ArthurBrussee/brush/releases>, checks its checksum and unpacks it under `backend/tools/`. The app finds it there, or set `BRUSH_PATH`. Brush needs a GPU with Metal, Vulkan or DX12 but **not** NVIDIA.
 
 Expect about 10 to 20 minutes of training on an Apple M-series chip. Objects, floor plan and analytics are available as soon as the camera path is found; the 3D tab shows progress until the model is ready.
 
