@@ -6,6 +6,8 @@ scale, just like real structure-from-motion output (arbitrary frame, arbitrary
 scale). build_scene must recover up, floor, size and scale.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -26,8 +28,8 @@ class _Rigid:
 class _Image:
     has_pose = True
 
-    def __init__(self, R_cw, center, name):
-        self.R, self.C, self.name = R_cw, center, name
+    def __init__(self, R_cw, center, name, image_id=0):
+        self.R, self.C, self.name, self.image_id = R_cw, center, name, image_id
 
     def cam_from_world(self):
         return _Rigid(self.R, -self.R @ self.C)
@@ -37,8 +39,9 @@ class _Image:
 
 
 class _Point:
-    def __init__(self, xyz):
+    def __init__(self, xyz, seen_by=()):
         self.xyz, self.error, self.color = xyz, 0.5, np.array([200, 120, 40], dtype="u1")
+        self.track = SimpleNamespace(elements=[SimpleNamespace(image_id=i) for i in seen_by])
 
 
 class _Rec:
@@ -52,7 +55,7 @@ def _rotation(rng):
     return q if np.linalg.det(q) > 0 else -q
 
 
-def make_reconstruction(seed=0):
+def make_reconstruction(seed=0, stand_still=False):
     rng = np.random.default_rng(seed)
     W, D, H = ROOM
     n = 800
@@ -68,17 +71,27 @@ def make_reconstruction(seed=0):
 
     Q = _rotation(rng)          # unknown world orientation
     up_true = Q @ np.array([0.0, 0.0, 1.0])
-    images = []
+    images, centers, forwards = [], [], []
     for i in range(40):
         c = np.array([rng.uniform(0.8, W - 0.8), rng.uniform(0.8, D - 0.8), 1.4 + rng.normal(0, 0.05)])
+        if stand_still:                                  # filmed by turning on the spot, with a little hand sway
+            c = np.array([W / 2, D / 2, 1.4]) + rng.normal(0, 0.03, 3)
         yaw, pitch = rng.uniform(0, 2 * np.pi), np.radians(rng.uniform(-25, 25))
         fwd = np.array([np.cos(yaw) * np.cos(pitch), np.sin(yaw) * np.cos(pitch), np.sin(pitch)])
         right = np.cross(fwd, [0, 0, 1]); right /= np.linalg.norm(right)
         down = np.cross(fwd, right)  # COLMAP: x right, y down, z forward
         R_room = np.stack([right, down, fwd])          # camera-from-room rotation
         R_cw = R_room @ Q.T                            # camera-from-(rotated)world
-        images.append(_Image(R_cw, SFM_SCALE * (Q @ c), f"f{i}.jpg"))
-    points = [_Point(SFM_SCALE * (Q @ p)) for p in pts]
+        images.append(_Image(R_cw, SFM_SCALE * (Q @ c), f"f{i}.jpg", image_id=i))
+        centers.append(c)
+        forwards.append(fwd)
+    # a point is seen by the cameras that look towards it (within 35 degrees of their axis)
+    centers, forwards = np.array(centers), np.array(forwards)
+    points = []
+    for p in pts:
+        d = p - centers
+        cos = (d * forwards).sum(1) / np.maximum(np.linalg.norm(d, axis=1), 1e-9)
+        points.append(_Point(SFM_SCALE * (Q @ p), seen_by=np.flatnonzero(cos > np.cos(np.radians(35)))))
     return _Rec(images, points), up_true
 
 
@@ -228,3 +241,21 @@ def test_doors_and_windows_are_only_kept_when_the_detector_is_fairly_sure():
     kept = lambda obs: {o["class"] for o in spatial.merge_observations(obs, scene)}  # noqa: E731
     assert kept(sightings("window", 0.14) + sightings("door", 0.12)) == set()
     assert kept(sightings("window", 0.31) + sightings("door", 0.25)) == {"window", "door"}
+
+
+def test_depth_information_tells_a_walk_from_a_pan_on_the_spot():
+    """A 10 s pan filmed by turning in place gave a 3D model that smeared from anywhere but the filming spot.
+    Its median triangulation angle was 5.9 degrees against 24.8 for a walk through the playroom, so a scan
+    below 10 degrees is flagged to the person."""
+    walk, _ = make_reconstruction()
+    pan, _ = make_reconstruction(stand_still=True)
+    walked = spatial.triangulation_angle_deg(walk)
+    panned = spatial.triangulation_angle_deg(pan)
+    assert walked > 25, walked
+    assert panned < 5, panned
+    assert spatial.build_scene(walk).parallax_deg == pytest.approx(walked, abs=1.0)
+    assert not any("barely moved sideways" in n for n in spatial.build_scene(walk).notes)
+    pan_scene = spatial.build_scene(pan)
+    assert any("barely moved sideways" in n for n in pan_scene.notes)
+    assert pan_scene.to_json()["parallax_deg"] < spatial.LOW_PARALLAX_DEG
+    assert pan_scene.to_json()["low_parallax"] is True and spatial.build_scene(walk).to_json()["low_parallax"] is False

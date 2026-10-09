@@ -5,7 +5,7 @@ import StructureView from '../StructureView'
 import Pins from '../Pins'
 import MeasureLayer from '../MeasureLayer'
 import MeasurePanel from './MeasurePanel'
-import { flyToObject, playTour, tourDuration } from '../../lib/camera'
+import { flyToObject, playTour, settleLookAround, tourDuration, turnToObject } from '../../lib/camera'
 import { dist, pickSplat } from '../../lib/measure'
 import { canRecord, safeName, saveBlob, startRecording } from '../../lib/record'
 import { Corners, Icon, Spinner } from '../ui'
@@ -56,6 +56,8 @@ export default function ViewerTab({
   const recorder = useRef(null)
 
   const hasPhoto = !!splatUrl
+  // A video filmed by turning on the spot has almost no depth in it: the model is only right from where the phone was.
+  const lookAround = !!recon?.low_parallax && !!startView
   const hasStructure = !!structureUrl
   const mode = choice ?? (hasPhoto ? 'photo' : 'structure')
 
@@ -76,10 +78,14 @@ export default function ViewerTab({
     }
   }
 
+  // Show an object: fly to it, or in look-around mode turn towards it without leaving the filming spot.
+  const goTo = (world) => (lookAround && o.id === 'auto' ? turnToObject(viewer.current, world) : flyToObject(viewer.current, world, o.up, unitsPerMeter))
+
   const halt = () => {
     stopMotion.current()
     stopMotion.current = () => {}
     setTouring(false)
+    if (lookAround) settleLookAround(viewer.current)
     if (recorder.current) finishRecording()          // whatever was filmed so far is still saved
   }
   useEffect(() => () => {
@@ -146,7 +152,7 @@ export default function ViewerTab({
     stopMotion.current()
     setTouring(false)
     setSelected(pin.id)
-    stopMotion.current = flyToObject(viewer.current, pin.world, o.up, unitsPerMeter)
+    stopMotion.current = goTo(pin.world)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, ready])
 
@@ -154,7 +160,7 @@ export default function ViewerTab({
     if (touring) return halt()
     halt()
     setTouring(true)
-    stopMotion.current = playTour(viewer.current, tour, unitsPerMeter, () => setTouring(false))
+    stopMotion.current = playTour(viewer.current, tour, unitsPerMeter, () => { setTouring(false); if (lookAround) settleLookAround(viewer.current) })
   }
 
   const toggleFull = async () => {
@@ -179,7 +185,7 @@ export default function ViewerTab({
       >
         {mode === 'photo' && hasPhoto ? (
           <ErrorBoundary title="The 3D viewer hit an error">
-            <SplatViewer url={splatUrl} ext={splatExt} up={o.up} startView={o.id === 'auto' ? startView : undefined} onLoad={(v) => { viewer.current = v; setReady(true); setSurface(splatSurface(v)) }} />
+            <SplatViewer url={splatUrl} ext={splatExt} up={o.up} startView={o.id === 'auto' ? startView : undefined} lookAround={lookAround && o.id === 'auto'} onLoad={(v) => { viewer.current = v; setReady(true); setSurface(splatSurface(v)) }} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary title="The 3D structure view hit an error">
@@ -188,7 +194,7 @@ export default function ViewerTab({
         )}
         <Corners className="text-paper/40" />
         {mode === 'photo' && ready && showPins && pins.length > 0 && (
-          <Pins viewerRef={viewer} pins={pins} selectedId={selected} onPick={(pin) => { halt(); setSelected(pin.id); stopMotion.current = flyToObject(viewer.current, pin.world, o.up, unitsPerMeter) }} />
+          <Pins viewerRef={viewer} pins={pins} selectedId={selected} onPick={(pin) => { halt(); setSelected(pin.id); stopMotion.current = goTo(pin.world) }} />
         )}
 
         {canMeasure && (
@@ -216,6 +222,11 @@ export default function ViewerTab({
           />
         )}
 
+        {mode === 'photo' && lookAround && o.id === 'auto' && !recording && !measuring && (
+          <p className="absolute bottom-12 left-4 z-20 max-w-md rounded-[3px] border border-viewport-line bg-viewport/85 px-3 py-2 text-xs text-[#c7d4de] backdrop-blur" role="status">
+            <b className="text-paper">Look-around mode.</b> This video was filmed by turning in one place, so it holds almost no depth: the model is only right from where the phone stood, and anything the phone never pointed at is black. Drag to look around, scroll to zoom. To explore the room, film while walking.
+          </p>
+        )}
         {recording && <div className="absolute inset-0 z-[15]" aria-hidden />}
         {recording && (
           <div className="absolute inset-x-4 top-4 z-20 flex items-center justify-between gap-3 rounded-[3px] border border-fail/60 bg-viewport/90 px-4 py-2.5 text-paper backdrop-blur" role="status">
@@ -269,7 +280,7 @@ export default function ViewerTab({
               <button onClick={() => { halt(); setSurface(null); setOrient((orient + 1) % options.length) }} className={btn} title="If the room looks sideways or upside down, try another orientation">
                 Orientation: {o.label}
               </button>
-              <button onClick={() => { halt(); setSelected(null); frameScene(viewer.current, o.up, o.id === 'auto' ? startView : undefined) }} className={btn}>Reset view</button>
+              <button onClick={() => { halt(); setSelected(null); frameScene(viewer.current, o.up, o.id === 'auto' ? startView : undefined, { lookAround: lookAround && o.id === 'auto' }) }} className={btn}>Reset view</button>
             </>
           ) : (
             <button onClick={() => setResetKey((k) => k + 1)} className={btn}>Reset view</button>

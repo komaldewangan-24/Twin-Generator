@@ -33,8 +33,31 @@ function sceneBounds(mesh) {
   return { center, radius: Math.max(d[Math.floor(d.length * 0.8)], 0.25) }
 }
 
+/**
+ * Look-around mode, for a video that was filmed by turning on the spot. Such a video holds almost no depth
+ * information, so its model is only right from the filming spot: orbiting or flying away shows smears.
+ * The camera therefore stays where the phone was and only turns; the wheel changes the field of view.
+ * Returns a function that undoes the wheel handler.
+ */
+export function lockToLookAround(viewer) {
+  const controls = viewer?.controls
+  const el = viewer?.renderer?.domElement
+  if (!controls || !el) return () => {}
+  controls.enableZoom = false
+  controls.enablePan = false
+  viewer.onMouseClick = () => {}               // a click would re-centre the orbit on a point in the scene
+  const wheel = (e) => {
+    e.preventDefault()
+    viewer.camera.fov = Math.min(90, Math.max(30, viewer.camera.fov + e.deltaY * 0.03))
+    viewer.camera.updateProjectionMatrix()
+    viewer.forceRenderNextFrame?.()
+  }
+  el.addEventListener('wheel', wheel, { passive: false })
+  return () => el.removeEventListener('wheel', wheel)
+}
+
 /** Put the camera at a pleasant 3/4 view that fits the room, whatever its size or position. */
-export function frameScene(viewer, upArr, startView) {
+export function frameScene(viewer, upArr, startView, { lookAround = false } = {}) {
   const mesh = viewer?.getSplatMesh?.()
   if (!mesh || !viewer.controls) return
   const { center: c, radius: r } = sceneBounds(mesh)
@@ -44,7 +67,10 @@ export function frameScene(viewer, upArr, startView) {
     const pos = new Vector3(...startView.position)
     const fwd = new Vector3(...startView.forward).normalize()
     viewer.camera.position.copy(pos)
-    viewer.controls.target.copy(pos).addScaledVector(fwd, r * 0.6)
+    // Orbit about a point in front of the camera; in look-around mode that point is so close that dragging
+    // only turns the view.
+    viewer.controls.target.copy(pos).addScaledVector(fwd, lookAround ? r * 0.01 : r * 0.6)
+    viewer.twinReach = lookAround ? r * 0.01 : undefined
     viewer.camera.lookAt(viewer.controls.target)
     viewer.controls.update()
     refreshSort(viewer)
@@ -64,7 +90,7 @@ export function frameScene(viewer, upArr, startView) {
 
 const NO_WEBGL2 = 'webgl2-unavailable'
 
-export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startView, onLoad, onError }) {
+export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startView, lookAround = false, onLoad, onError }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const [status, setStatus] = useState('loading')
@@ -82,12 +108,13 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
   const upKey = up.join()
   const startKey = JSON.stringify(startView ?? null)
   const latest = useRef({})
-  latest.current = { up, startView }
+  latest.current = { up, startView, lookAround }
 
   useEffect(() => {
     if (!url) return
     let cancelled = false
-    const { up, startView } = latest.current
+    const { up, startView, lookAround } = latest.current
+    let undoLookAround = () => {}
 
     const init = async () => {
       try {
@@ -127,7 +154,9 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
         if (cancelled) return
 
         viewer.start()
-        frameScene(viewer, up, startView)
+        const turnOnTheSpot = lookAround && !!startView
+        frameScene(viewer, up, startView, { lookAround: turnOnTheSpot })
+        if (turnOnTheSpot) undoLookAround = lockToLookAround(viewer)
         setStatus('ready')
         if (import.meta.env.DEV) window.__splatViewer = viewer
         onLoadRef.current?.(viewer)
@@ -145,6 +174,7 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
 
     return () => {
       cancelled = true
+      undoLookAround()
       const v = viewerRef.current
       viewerRef.current = null
       if (!v) return
@@ -160,7 +190,7 @@ export default function SplatViewer({ url, ext, up = ORIENTATIONS[0].up, startVi
         /* ignore teardown errors */
       }
     }
-  }, [url, ext, upKey, startKey])
+  }, [url, ext, upKey, startKey, lookAround])
 
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden">

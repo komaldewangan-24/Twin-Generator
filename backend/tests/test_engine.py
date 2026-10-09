@@ -61,6 +61,33 @@ def test_ply_to_splat_keeps_the_faint_haze_that_walls_are_built_from(tmp_path):
     assert (kept["s"].max(axis=1) > 0.5).sum() >= 28, "the large background splats must stay"
 
 
+def test_short_videos_are_sampled_more_densely_than_long_ones():
+    """Frames that are too far apart cannot be linked into a camera path (2 of 28 placed with every 8th frame
+    of the playroom, 83% with every 3rd), so a quick phone clip gets more frames per second than a minute-long
+    one, with the total kept near 240."""
+    from app.services.extractor import MAX_FPS, MIN_FPS, choose_fps
+
+    assert choose_fps(60) == 4 and choose_fps(120) == MIN_FPS and choose_fps(600) == MIN_FPS
+    assert choose_fps(30) == 8 and choose_fps(20) == 12 and choose_fps(5) == MAX_FPS
+    assert choose_fps(None) == MIN_FPS and choose_fps(0) == MIN_FPS
+
+
+def test_extractor_samples_a_short_video_densely_by_default(tmp_path):
+    import cv2
+    import numpy as np
+
+    from app.services.extractor import extract_frames, video_seconds
+
+    video = tmp_path / "short.mp4"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), 10, (320, 240))
+    for i in range(50):                                   # 5 seconds
+        writer.write(np.full((240, 320, 3), 30 + i * 4, np.uint8))
+    writer.release()
+    assert 4.5 < video_seconds(str(video)) < 5.5
+    assert extract_frames(str(video), str(tmp_path / "dense")) >= 55          # 12 per second, not 4
+    assert extract_frames(str(video), str(tmp_path / "sparse"), fps=4) <= 22
+
+
 def test_extractor_keeps_short_side_720_for_portrait_and_landscape(tmp_path):
     """Phone video is usually portrait. It must keep full resolution (720 wide),
     not shrink to 405 px wide."""

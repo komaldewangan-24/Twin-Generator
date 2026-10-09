@@ -24,7 +24,13 @@ def make_client():
     not Path(settings.YOLO_ONNX_PATH).exists(),
     reason="needs the detector model: run python scripts/setup_detector.py",
 )
-def test_full_flow():
+def test_full_flow(monkeypatch):
+    # This test is about the API and the pipeline's stages. Training a 3D model takes many minutes (and a
+    # denser sampling of short videos now lets even the synthetic one reach it), so pretend there is no trainer:
+    # the scan must still finish, with the reason recorded.
+    from app.services import reconstruct
+
+    monkeypatch.setattr(reconstruct, "find_brush", lambda: None)
     with make_client() as client:
         # 1. signup
         r = client.post("/auth/signup", json={"email": TEST_EMAIL, "password": TEST_PASSWORD})

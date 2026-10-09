@@ -25,6 +25,12 @@ import numpy as np
 # even when every value is finite. Real problems are caught by the isfinite checks below.
 warnings.filterwarnings("ignore", message=".*encountered in matmul", category=RuntimeWarning)
 
+# Median of the widest angle at which each 3D point was seen from. Depth comes from seeing the same point
+# from different places, so this is how much depth the video really contains. A walk through the playroom
+# measured 24.8 degrees; a 10 second pan filmed by turning on the spot measured 5.9 and its 3D model smears
+# as soon as you look from anywhere else.
+LOW_PARALLAX_DEG = 10.0
+
 ASSUMED_CAMERA_HEIGHT_M = 1.4
 ASSUMED_CEILING_HEIGHT_M = 2.5
 
@@ -84,6 +90,7 @@ class Scene:
     room_box: dict = field(default_factory=dict)     # floor and ceiling outlines in SfM world coordinates, for the 3D structure view
     tour: list = field(default_factory=list)         # camera poses in filming order, for the guided walkthrough
     notes: list[str] = field(default_factory=list)
+    parallax_deg: float | None = None                # how much depth the video contains (see LOW_PARALLAX_DEG)
 
     def to_json(self) -> dict:
         return {
@@ -103,6 +110,8 @@ class Scene:
             "room_box": self.room_box,
             "tour": self.tour,
             "notes": self.notes,
+            "parallax_deg": None if self.parallax_deg is None else round(self.parallax_deg, 1),
+            "low_parallax": self.parallax_deg is not None and self.parallax_deg < LOW_PARALLAX_DEG,
         }
 
 
@@ -147,6 +156,27 @@ def _rot(image) -> np.ndarray:
     return np.array(image.cam_from_world().matrix())[:, :3]
 
 
+def triangulation_angle_deg(rec, sample: int = 3000) -> float | None:
+    """Median over the 3D points of the widest angle between the rays to the cameras that saw them."""
+    centers = {im.image_id: np.asarray(im.projection_center(), dtype=float) for im in rec.images.values() if im.has_pose}
+    points = list(rec.points3D.values())
+    if len(points) > sample:
+        pick = np.random.default_rng(0).choice(len(points), sample, replace=False)
+        points = [points[i] for i in pick]
+    angles = []
+    for p in points:
+        track = getattr(p, "track", None)
+        if track is None:
+            continue
+        seen = [centers[e.image_id] for e in track.elements if e.image_id in centers]
+        if len(seen) < 2:
+            continue
+        rays = np.asarray(seen) - np.asarray(p.xyz, dtype=float)
+        rays /= np.maximum(np.linalg.norm(rays, axis=1, keepdims=True), 1e-12)
+        angles.append(float(np.degrees(np.arccos(np.clip((rays @ rays.T).min(), -1.0, 1.0)))))
+    return float(np.median(angles)) if len(angles) >= 20 else None
+
+
 def build_scene(rec) -> Scene:
     """Work out which way is up, where the floor is, and the room's size."""
     images = [im for im in rec.images.values() if im.has_pose]
@@ -165,6 +195,13 @@ def build_scene(rec) -> Scene:
     notes = []
     if agreement < 0.6:  # camera ups all over the place: portrait/landscape mixed, or rolled a lot
         notes.append("The phone was rotated a lot while filming, so floor and size estimates may be less accurate.")
+
+    parallax = triangulation_angle_deg(rec)
+    if parallax is not None and parallax < LOW_PARALLAX_DEG:
+        notes.append(
+            f"The camera barely moved sideways ({parallax:.0f} degrees of depth information; a walk through a room gives about 25), "
+            "so the 3D model looks right from where you stood and smeared from anywhere else. Film while walking along the walls."
+        )
 
     pts = np.array([p.xyz for p in rec.points3D.values()])
     errs = np.array([p.error for p in rec.points3D.values()])
@@ -273,6 +310,7 @@ def build_scene(rec) -> Scene:
         room_box=room_box,
         tour=tour,
         notes=notes,
+        parallax_deg=parallax,
     )
 
 

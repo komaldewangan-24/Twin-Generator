@@ -1,5 +1,5 @@
 // Camera moves for the 3D viewer: fly to an object, replay the filmed walk.
-import { Vector3 } from 'three'
+import { Quaternion, Vector3 } from 'three'
 
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 
@@ -58,6 +58,31 @@ function look(viewer, position, target) {
   viewer.controls.target.copy(target)
   viewer.camera.lookAt(target)
   viewer.controls.update()
+}
+
+/** Look-around mode: put the orbit point right in front of the camera again, so dragging only turns the view. */
+export function settleLookAround(viewer) {
+  if (!viewer?.controls || !viewer.twinReach) return
+  const forward = new Vector3(0, 0, -1).applyQuaternion(viewer.camera.quaternion)
+  viewer.controls.target.copy(viewer.camera.position).addScaledVector(forward, viewer.twinReach)
+  viewer.controls.update()
+}
+
+/** Look-around mode: turn to face a 3D point without moving the camera. */
+export function turnToObject(viewer, world, done) {
+  if (!viewer?.controls || !viewer.twinReach) return () => {}
+  const pos = viewer.camera.position.clone()
+  const from = viewer.controls.target.clone().sub(pos).normalize()
+  const to = new Vector3(...world).sub(pos).normalize()
+  const turn = new Quaternion().setFromUnitVectors(from, to)
+  const step = new Quaternion()
+  const identity = new Quaternion()
+  const target = new Vector3()
+  return animate(700, (t) => {
+    step.slerpQuaternions(identity, turn, ease(t))
+    target.copy(from).applyQuaternion(step).multiplyScalar(viewer.twinReach).add(pos)
+    look(viewer, pos, target)
+  }, () => { refreshSort(viewer); done?.() })
 }
 
 /** Glide the camera to look at a 3D point from about 1.6 m away, from the side you are already on. */
