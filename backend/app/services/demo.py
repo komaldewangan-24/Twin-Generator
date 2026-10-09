@@ -6,7 +6,8 @@ the moment it starts, which is what you need for a presentation or on a laptop
 that cannot train. Make or refresh it from any finished scan with
 `python scripts/export_demo.py <project-id>`.
 
-Files in backend/demo/: demo.splat (the 3D model), preview.jpg, demo.json.
+Files in backend/demo/: demo.splat (the 3D model), structure.points (the 3D point cloud),
+preview.jpg, demo.json.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ DEMO_DIR = BASE_DIR / "demo"
 DEMO_SPLAT = DEMO_DIR / "demo.splat"
 DEMO_PREVIEW = DEMO_DIR / "preview.jpg"
 DEMO_DATA = DEMO_DIR / "demo.json"
+DEMO_STRUCTURE = DEMO_DIR / "structure.points"
 
 
 def available() -> bool:
@@ -50,6 +52,8 @@ def create_demo_project(db: Session, user_id: str) -> tuple[Project, bool]:
     splat = storage.splat_path_for(project.id, ".splat")
     shutil.copyfile(DEMO_SPLAT, splat)
     project.splat_path = splat
+    if DEMO_STRUCTURE.is_file():
+        shutil.copyfile(DEMO_STRUCTURE, storage.structure_path_for(project.id))
     if DEMO_PREVIEW.is_file():
         preview = storage.preview_path_for(project.id)
         shutil.copyfile(DEMO_PREVIEW, preview)

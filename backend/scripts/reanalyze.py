@@ -1,4 +1,4 @@
-"""Re-run object detection and room analysis for a scan, without retraining the 3D model.
+"""Re-run object detection and room analysis for a scan (and rebuild its 3D structure file), without retraining the 3D model.
 
 Use it after upgrading the detector or the analysis code. It reuses the camera
 positions saved during processing (storage/uploads/<id>/recon/sparse/best).
@@ -18,7 +18,7 @@ import app.main  # noqa: E402,F401  (registers every model)
 from app.core.config import settings  # noqa: E402
 from app.core.database import SessionLocal  # noqa: E402
 from app.models.project import Project  # noqa: E402
-from app.services import detector, spatial  # noqa: E402
+from app.services import detector, spatial, storage, structure  # noqa: E402
 
 
 def main() -> None:
@@ -33,6 +33,7 @@ def main() -> None:
     pycolmap.logging.minloglevel = 2
     rec = pycolmap.Reconstruction(str(sparse))
     scene = spatial.build_scene(rec)
+    structure.write_points(rec, Path(storage.structure_path_for(pid)))
     result = detector.run_detection(str(base / "frames"), rec, scene)
 
     with SessionLocal() as db:

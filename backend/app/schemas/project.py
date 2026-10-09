@@ -24,6 +24,7 @@ class ProjectResponse(BaseModel):
     has_video: bool = False
     has_preview: bool = False
     has_splat: bool = False
+    has_structure: bool = False
     splat_ext: str | None = None
 
     model_config = {"from_attributes": True}

@@ -38,7 +38,7 @@ class _Image:
 
 class _Point:
     def __init__(self, xyz):
-        self.xyz, self.error = xyz, 0.5
+        self.xyz, self.error, self.color = xyz, 0.5, np.array([200, 120, 40], dtype="u1")
 
 
 class _Rec:
@@ -161,3 +161,22 @@ def test_implausible_classes_need_stronger_evidence():
     merged = spatial.merge_observations(sightings("toilet", 0.56) + sightings("chair", 0.56), scene)
     assert {o["class"] for o in merged} == {"chair"}
     assert {o["class"] for o in spatial.merge_observations(sightings("toilet", 0.85), scene)} == {"toilet"}
+
+
+def test_room_box_is_a_flat_floor_and_a_flat_ceiling_above_it():
+    """The structure view draws walls from these outlines, in the 3D model's own coordinates."""
+    rec, up_true = make_reconstruction()
+    scene = spatial.build_scene(rec)
+    box = spatial.build_scene(rec).to_json()["room_box"]
+    floor, ceiling = np.array(box["floor"]), np.array(box["ceiling"])
+    assert len(floor) == len(ceiling) >= 3
+    fh, ch = floor @ scene.up, ceiling @ scene.up
+    assert np.ptp(fh) < 1e-2 and np.ptp(ch) < 1e-2, "each outline lies in one horizontal plane"
+    height_m = (ch.mean() - fh.mean()) * scene.meters_per_unit
+    assert 2.0 < height_m < 3.0, height_m
+    # the outline surrounds the cameras: every camera is inside the floor polygon's bounding box
+    cams = np.array([im.projection_center() for im in rec.images.values()])
+    along = lambda pts, axis: pts @ axis
+    for axis in (scene.e1, scene.e2):
+        assert along(floor, axis).min() <= along(cams, axis).min() + 1e-3
+        assert along(floor, axis).max() >= along(cams, axis).max() - 1e-3

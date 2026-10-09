@@ -22,7 +22,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.project import Project, ProjectStatus
-from app.services import detector, extractor, preview, reconstruct, spatial, splat_convert, storage
+from app.services import detector, extractor, preview, reconstruct, spatial, splat_convert, storage, structure
 
 log = logging.getLogger("uvicorn.error")
 
@@ -100,6 +100,10 @@ def run_pipeline(project_id: str) -> None:
             frames = reconstruct.select_frames(frames_dir)
             recon, images_dir = reconstruct.estimate_poses(frames, work, progress)
             scene = spatial.build_scene(recon)
+            try:
+                structure.write_points(recon, Path(storage.structure_path_for(project_id)))
+            except Exception:  # noqa: BLE001 - the structure view is a bonus; never lose the scan for it
+                log.exception("Could not write the 3D structure file")
         except reconstruct.ReconstructionError as exc:
             recon = scene = None
             recon_error = str(exc)

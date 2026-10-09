@@ -58,6 +58,12 @@ class Project(Base):
         return bool(self.preview_path)
 
     @property
+    def has_structure(self) -> bool:
+        from app.core.config import settings
+
+        return (settings.UPLOADS_DIR / self.id / "structure.points").is_file()
+
+    @property
     def has_splat(self) -> bool:
         return bool(self.splat_path)
 

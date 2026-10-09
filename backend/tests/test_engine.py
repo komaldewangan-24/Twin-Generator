@@ -151,3 +151,37 @@ def test_ply_to_splat_caps_the_number_of_splats_keeping_the_most_important(tmp_p
     assert stats["out"] == 100
     kept = np.fromfile(tmp_path / "o.splat", dtype=[("p", "<f4", 3), ("s", "<f4", 3), ("c", "u1", 4), ("r", "u1", 4)])
     assert kept["s"].max(axis=1).min() > 0.05, "the largest, most important splats must be the ones kept"
+
+
+def test_structure_file_round_trips_and_drops_unreliable_points(tmp_path):
+    """The point cloud the browser draws: same coordinates in, same coordinates out."""
+    import numpy as np
+
+    from app.services import structure
+    from tests.test_spatial import make_reconstruction
+
+    rec, _ = make_reconstruction()
+    points = list(rec.points3D.values())
+    for p in points[:50]:
+        p.error = 99.0                                   # a few terrible points
+    path = tmp_path / "structure.points"
+    n = structure.write_points(rec, path)
+    xyz, rgb = structure.read_points(path)
+    assert n == len(xyz) == len(rgb)
+    assert 0.85 * len(points) < n < len(points), "the least reliable ~10% are dropped"
+    assert rgb[0].tolist() == [200, 120, 40]
+    originals = np.array([p.xyz for p in points])
+    for p in xyz[:20]:   # stored as 32-bit floats, so compare by distance rather than exact decimals
+        assert np.linalg.norm(originals - p, axis=1).min() < 1e-4
+    assert path.stat().st_size == 8 + n * 12 + n * 3, "tiny and trivial to parse in JavaScript"
+
+
+def test_structure_file_with_wrong_header_is_refused(tmp_path):
+    import pytest
+
+    from app.services import structure
+
+    bad = tmp_path / "x.points"
+    bad.write_bytes(b"NOPE" + b"\x00" * 20)
+    with pytest.raises(ValueError):
+        structure.read_points(bad)

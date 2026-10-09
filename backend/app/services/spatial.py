@@ -69,6 +69,7 @@ class Scene:
     ceiling_height_m: float
     camera_path_m: list[list[float]]
     start_view: dict = field(default_factory=dict)   # a real camera pose, in SfM world coordinates
+    room_box: dict = field(default_factory=dict)     # floor and ceiling outlines in SfM world coordinates, for the 3D structure view
     tour: list = field(default_factory=list)         # camera poses in filming order, for the guided walkthrough
     notes: list[str] = field(default_factory=list)
 
@@ -87,6 +88,7 @@ class Scene:
             },
             "camera_path": [[round(x, 2), round(z, 2)] for x, z in self.camera_path_m],
             "start_view": self.start_view,
+            "room_box": self.room_box,
             "tour": self.tour,
             "notes": self.notes,
         }
@@ -212,6 +214,16 @@ def build_scene(rec) -> Scene:
     cam_uv = np.stack([cam_c @ e1, cam_c @ e2], 1)
     path = (cam_uv - [u_lo, v_lo]) * scale
 
+    # The room as a 3D box in the model's own coordinates: the floor outline at floor height and
+    # the same outline at ceiling height. The structure view draws it as walls.
+    hull_uv = hull / scale + np.array([u_lo, v_lo])
+    def _lift(height: float) -> list[list[float]]:
+        return [
+            [round(float(v), 4) for v in (u * e1 + w * e2 + height * up)]
+            for u, w in hull_uv
+        ]
+    room_box = {"floor": _lift(floor_h), "ceiling": _lift(ceiling_h)}
+
     # An implausibly small/large room means the scale assumption failed.
     width, depth = (u_hi - u_lo) * scale, (v_hi - v_lo) * scale
     if max(width, depth) > 40 or min(width, depth) < 0.8:
@@ -246,6 +258,7 @@ def build_scene(rec) -> Scene:
         ceiling_height_m=float(room_units * scale),
         camera_path_m=path[:: max(1, len(path) // 80)].tolist(),
         start_view=start_view,
+        room_box=room_box,
         tour=tour,
         notes=notes,
     )

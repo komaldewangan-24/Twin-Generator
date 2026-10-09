@@ -24,6 +24,8 @@ def test_demo_scan_is_added_once_and_served_privately(tmp_path, monkeypatch):
     monkeypatch.setattr(demo, "DEMO_SPLAT", tmp_path / "demo.splat")
     monkeypatch.setattr(demo, "DEMO_PREVIEW", tmp_path / "preview.jpg")
     monkeypatch.setattr(demo, "DEMO_DATA", tmp_path / "demo.json")
+    (tmp_path / "structure.points").write_bytes(b"TWSP" + (0).to_bytes(4, "little"))
+    monkeypatch.setattr(demo, "DEMO_STRUCTURE", tmp_path / "structure.points")
 
     with make_client() as client:
         a = client.post("/auth/signup", json={"email": "demo-a@example.com", "password": "secret123"}).json()["access_token"]
@@ -45,6 +47,10 @@ def test_demo_scan_is_added_once_and_served_privately(tmp_path, monkeypatch):
         other = client.post("/files/token", headers=hb).json()["token"]
         assert client.get(f"/files/{project['id']}/model.splat", params={"t": other}).status_code == 404
 
+        assert project["has_structure"] is True
+        structure = client.get(f"/files/{project['id']}/structure.points", params={"t": token})
+        assert structure.status_code == 200 and structure.content[:4] == b"TWSP"
+        assert client.get(f"/files/{project['id']}/structure.points", params={"t": other}).status_code == 404
         assert client.get(f"/projects/{project['id']}/objects", headers=ha).status_code == 200
         assert client.delete(f"/projects/{project['id']}", headers=ha).status_code == 204
         assert demo.DEMO_SPLAT.exists(), "deleting a user's copy must never delete the bundled demo"

@@ -31,3 +31,8 @@ def work_dir_for(project_id: str) -> str:
 
 def progress_path_for(project_id: str) -> str:
     return str(project_dir(project_id) / "progress.json")
+
+
+def structure_path_for(project_id: str) -> str:
+    """The 3D point cloud recovered from the video (see services/structure.py)."""
+    return str(project_dir(project_id) / "structure.points")

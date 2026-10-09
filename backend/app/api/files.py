@@ -48,7 +48,7 @@ def _user_from_file_token(token: str) -> str:
 
 @router.get("/files/{project_id}/{name}")
 def get_file(project_id: str, name: str, t: str = Query(...), db: Session = Depends(get_db)):
-    """`name` is `preview.jpg` or `model.<ext>`; the extension also tells the
+    """`name` is `preview.jpg`, `structure.points` or `model.<ext>`; the extension also tells the
     3D viewer which file format to expect."""
     user_id = _user_from_file_token(t)
     project = db.query(Project).filter(Project.id == project_id, Project.user_id == user_id).first()
@@ -57,6 +57,8 @@ def get_file(project_id: str, name: str, t: str = Query(...), db: Session = Depe
 
     if name == "preview.jpg" and project.preview_path:
         path, media = Path(project.preview_path), "image/jpeg"
+    elif name == "structure.points":
+        path, media = settings.UPLOADS_DIR / project.id / "structure.points", "application/octet-stream"
     elif name.startswith("model.") and project.splat_path and Path(name).suffix in SPLAT_SUFFIXES:
         path, media = Path(project.splat_path), "application/octet-stream"
         if path.suffix != Path(name).suffix:

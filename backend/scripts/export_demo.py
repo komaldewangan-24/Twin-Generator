@@ -2,7 +2,7 @@
 
     python scripts/export_demo.py <project-id> ["Name shown on the dashboard"]
 
-Copies the 3D model, preview image and analysis into backend/demo/, then commit
+Copies the 3D model, 3D structure, preview image and analysis into backend/demo/, then commit
 that folder. Anyone who clones the repo can press "Try the demo scan" and see
 the full app with no GPU, trainer or video. Use your own scan for the final
 submission if you can: the bundled sample comes from a public dataset
@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app.main  # noqa: E402,F401  (registers every model)
 from app.core.database import SessionLocal  # noqa: E402
 from app.models.project import Project  # noqa: E402
-from app.services.demo import DEMO_DATA, DEMO_DIR, DEMO_PREVIEW, DEMO_SPLAT  # noqa: E402
+from app.services import storage  # noqa: E402
+from app.services.demo import DEMO_DATA, DEMO_DIR, DEMO_PREVIEW, DEMO_SPLAT, DEMO_STRUCTURE  # noqa: E402
 
 
 def main() -> None:
@@ -35,6 +36,9 @@ def main() -> None:
             sys.exit("The scan's model is not a .splat file; process it with the current pipeline first.")
         DEMO_DIR.mkdir(exist_ok=True)
         shutil.copyfile(p.splat_path, DEMO_SPLAT)
+        structure = Path(storage.structure_path_for(pid))
+        if structure.is_file():
+            shutil.copyfile(structure, DEMO_STRUCTURE)
         if p.preview_path and Path(p.preview_path).is_file():
             shutil.copyfile(p.preview_path, DEMO_PREVIEW)
         DEMO_DATA.write_text(json.dumps(
