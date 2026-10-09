@@ -34,8 +34,9 @@ PROMPTS = {
 }
 CONF = 0.25
 # Doors and windows score far lower than furniture even when they are plainly visible, so they get
-# their own thresholds; everything else uses CONF.
-CLASS_CONF = {"door": 0.05, "window": 0.07}
+# their own (lower) threshold for being considered at all; the app then only keeps one that stays at
+# 0.2 or more on average over several frames (MIN_CONFIDENCE in spatial.py). Everything else uses CONF.
+CLASS_CONF = {"door": 0.10, "window": 0.10}
 MODELS = Path(__file__).resolve().parent.parent / "models"
 
 

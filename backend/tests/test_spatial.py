@@ -214,3 +214,17 @@ def test_one_wide_window_seen_from_different_angles_is_one_window():
     assert len(spatial.merge_observations(near, scene)) == 1
     far = near + [sighting(f, 4.5) for f in "efgh"]            # a second window across the room
     assert len(spatial.merge_observations(far, scene)) == 2
+
+
+def test_doors_and_windows_are_only_kept_when_the_detector_is_fairly_sure():
+    """A wall book rack scored 0.14 as a window on the playroom scan, so low-confidence openings are dropped:
+    better to miss a window than to cut one into the wrong wall."""
+    rec, _ = make_reconstruction()
+    scene = spatial.build_scene(rec)
+
+    def sightings(cls, conf):
+        return [{"cls": cls, "u": 1.0, "v": 1.0, "conf": conf, "frame": f, "world": [0, 0, 0]} for f in "abcd"]
+
+    kept = lambda obs: {o["class"] for o in spatial.merge_observations(obs, scene)}  # noqa: E731
+    assert kept(sightings("window", 0.14) + sightings("door", 0.12)) == set()
+    assert kept(sightings("window", 0.31) + sightings("door", 0.25)) == {"window", "door"}

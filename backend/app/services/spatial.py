@@ -54,6 +54,13 @@ MIN_VOTES_BY_CLASS = {
 # Real ones usually do. Everything else only needs the detector's own threshold.
 MIN_CONFIDENCE = {
     "toilet": 0.70, "bench": 0.65, "sink": 0.60, "refrigerator": 0.55, "oven": 0.60, "microwave": 0.60,
+    # Broad open-vocabulary words match anything box-like: on the playroom scan "cabinet" labelled a
+    # desk (0.46) and a toy side table (0.37) as well as the real bookcase (0.60).
+    "cabinet": 0.50, "counter": 0.50, "shelf": 0.50,
+    # Doors and windows score low even when they are plain to see (the playroom's window: 0.13), and
+    # the same model gives a wall book rack, a heater and a chalkboard 0.09 to 0.14 as "window". Confidence
+    # cannot tell them apart below about 0.2, and a window drawn in the wrong wall is worse than a missing one.
+    "door": 0.20, "window": 0.20,
 }
 
 
