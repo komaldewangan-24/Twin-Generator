@@ -1,8 +1,12 @@
 import json
 import time
+from pathlib import Path
+
+import pytest
 
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 from tests.video_fixture import generate_test_video
 
@@ -16,6 +20,10 @@ def make_client():
     return TestClient(app)
 
 
+@pytest.mark.skipif(
+    not Path(settings.YOLO_ONNX_PATH).exists(),
+    reason="needs the detector model: run python scripts/setup_detector.py",
+)
 def test_full_flow():
     with make_client() as client:
         # 1. signup

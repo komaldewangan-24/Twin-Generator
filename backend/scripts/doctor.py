@@ -88,7 +88,7 @@ def check_detector() -> None:
         report(
             "FAIL", "Object detector model missing",
             f"Expected {path}\nWithout it objects are not detected (the 3D model still builds).\n"
-            "Fix: export it once, see README > Model weights  (yolo export model=yolov8s.pt format=onnx).",
+            "Fix:  python scripts/setup_detector.py     (one-time export, takes a few minutes)",
         )
         return
     try:
@@ -109,14 +109,11 @@ def find_brush() -> str | None:
 def check_brush() -> str | None:
     brush = find_brush()
     if not brush:
-        suffix = {"Windows": "x86_64-pc-windows-msvc.zip", "Darwin": "aarch64-apple-darwin.tar.xz"}.get(platform.system(), "x86_64-unknown-linux-gnu.tar.xz")
         report(
             "FAIL", "3D trainer (Brush) not installed",
             "This is the most common reason no 3D model appears for a new video.\n"
-            "Fix: download brush-app-" + suffix + " from https://github.com/ArthurBrussee/brush/releases\n"
-            f"and unpack it so that this file exists: {ROOT / 'tools'}{os.sep}brush-app-...{os.sep}brush_app"
-            + (".exe" if platform.system() == "Windows" else "")
-            + "\n(or set BRUSH_PATH to the file).",
+            "Fix:  python scripts/install_brush.py     (downloads and verifies the right build for this computer)\n"
+            "Or install it by hand from https://github.com/ArthurBrussee/brush/releases into " + str(ROOT / "tools") + " and set BRUSH_PATH if needed.",
         )
         return None
     version = run([brush, "--version"])
