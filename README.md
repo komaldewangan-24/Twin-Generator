@@ -9,7 +9,7 @@ Built as an MCA major project. The web app runs entirely on CPU -- no NVIDIA GPU
 ## Features
 
 - **Authentication** -- JWT signup/login, bcrypt password hashing, project ownership enforced on every endpoint.
-- **Video processing pipeline** (runs async after upload):
+- **Video or photo processing pipeline** (runs async after upload; a scan is made from a video, or from 15 to 300 photos of the place):
   1. FFmpeg extracts frames
   2. COLMAP (via `pycolmap`) recovers the camera path and a sparse 3D point cloud
   3. YOLOv8 (ONNX Runtime, CPU) detects objects; each sighting is placed on the floor in 3D and merged across frames, so counts and positions are real
@@ -150,6 +150,7 @@ All project endpoints require `Authorization: Bearer <token>`.
 | PATCH  | `/projects/{id}`                  | Rename / update |
 | DELETE | `/projects/{id}`                  | Delete project and its files |
 | POST   | `/projects/{id}/upload`           | Upload walkthrough video (multipart field `file`) |
+| POST   | `/projects/{id}/photos`           | Upload 15 to 300 photos instead of a video (multipart field `files`, repeated) |
 | GET    | `/projects/{id}/status`           | Pipeline status + stage timeline |
 | GET    | `/projects/{id}/objects`          | Detected objects, counts, positions |
 | GET    | `/projects/{id}/analytics`        | Rooms, capacity, area (optional `?room_width_m=`) |
@@ -213,6 +214,8 @@ Training takes about 25 minutes on an Apple M4 at the default `SPLAT_QUALITY=hig
 ![Playroom scan before and after the converter and training changes, next to the photo it should match](docs/model-quality.jpg)
 
 The two biggest causes of a blurry, smeary model were both found by rendering the same camera positions in the app's own viewer and comparing with photos: (1) the converter threw away every splat under 5% opacity, which is 46% of them, because Brush builds walls and ceilings out of hundreds of thousands of faint splats, leaving black holes and noise; (2) Brush never stops adding splats in a run shorter than 30000 steps, so short runs were never polished. Both are fixed. Training steps matter less than they look: Brush's own render improves by 0.2 dB from 12000 to 30000 steps, the browser view by 2 dB. Objects, floor plan and analytics are available as soon as the camera path is found; the 3D tab shows progress until the model is ready.
+
+**Photos instead of a video.** The 3D engine only needs overlapping pictures of a place, so on the project page you can choose **Choose photos** (or drop several photos) instead of a video: 15 to 300 JPG, PNG, WebP or HEIC files, about 60 to 100 for a room. They go through exactly the same steps as video frames: each is rotated by its phone orientation flag, scaled to 720 px on the short side and linked in the order of their file names (IMG_2 before IMG_10). If the photos are not all the same shape (portrait and landscape mixed) each gets its own camera model instead of one shared one. Take them like a video would be filmed, with the same rules: about 60 to 80% of each photo shared with the next, step sideways between shots along the walls instead of turning on the spot, same camera and lens, no zoom, steady light, sharp, no flash, furniture and wall detail in view. iPhone HEIC photos need `pillow-heif` (in `requirements.txt`); without it, export them as JPG. Tested on 112 photos cut from the playroom footage (a real set of photos has not been tried).
 
 **Video filmed by turning on the spot.** Depth comes from seeing the same point from different places. The app measures this for every scan (the median angle at which each 3D point was seen from; 25 degrees for a walk around the playroom, 5.9 for a 10 second pan from one spot) and below 10 degrees it says so in the Analytics notes and switches the photoreal viewer to a **look-around mode**: the camera stays where the phone stood and only turns, because from anywhere else the model smears. Anything the phone never pointed at is black. No training setting fixes missing depth: on a pan like this, 7000 steps predicted unseen frames 2.6 dB worse than 18000, and penalising large splats (`--scale-loss-weight 1e-6`) made them 2.5 dB worse.
 

@@ -115,6 +115,17 @@ def check_open_vocab() -> None:
         )
 
 
+def check_heic() -> None:
+    """Optional: iPhone photos are HEIC; without pillow-heif they must be exported as JPG first."""
+    try:
+        import pillow_heif  # noqa: F401
+    except Exception:  # noqa: BLE001
+        report("INFO", "iPhone HEIC photos cannot be read (optional package missing)",
+               "Photos work as JPG, PNG or WebP. To also read HEIC:  pip install pillow-heif")
+    else:
+        report("OK", "Photo upload can read iPhone HEIC photos")
+
+
 def find_brush() -> str | None:
     from app.services import reconstruct
 
@@ -251,6 +262,7 @@ def main() -> None:
     check_ffmpeg()
     check_detector()
     check_open_vocab()
+    check_heic()
     brush = check_brush()
     check_gpu()
     check_env()

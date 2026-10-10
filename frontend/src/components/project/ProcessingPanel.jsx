@@ -8,8 +8,11 @@ const STEPS = [
   { key: 'TRAINING_3D', label: 'Building the 3D model' },
 ]
 
-export default function ProcessingPanel({ status, frameCount, progress }) {
-  const active = Math.max(0, STEPS.findIndex((s) => s.key === status))
+export default function ProcessingPanel({ status, frameCount, progress, fromPhotos = false }) {
+  const steps = fromPhotos
+    ? STEPS.map((s) => (s.key === 'UPLOADED' ? { ...s, label: 'Photos received' } : s.key === 'EXTRACTING' ? { ...s, label: 'Preparing the photos' } : s))
+    : STEPS
+  const active = Math.max(0, steps.findIndex((s) => s.key === status))
   const pct = progress ? Math.round(progress.fraction * 100) : null
   return (
     <div className="grid overflow-hidden rounded-[3px] border border-ink bg-viewport text-paper md:grid-cols-[1.4fr_1fr]">
@@ -29,7 +32,7 @@ export default function ProcessingPanel({ status, frameCount, progress }) {
         </div>
         <div className="absolute bottom-5 left-6 right-6">
           <p className="label !text-flag">Analysing</p>
-          <p className="mt-1 font-display text-3xl font-semibold">{STEPS[active].label}</p>
+          <p className="mt-1 font-display text-3xl font-semibold">{steps[active].label}</p>
           <p className="figure mt-1 text-sm text-[#9db0be]" aria-live="polite">
             {progress?.message ?? (frameCount ? `${frameCount} frames extracted` : 'Starting')}
           </p>
@@ -42,7 +45,7 @@ export default function ProcessingPanel({ status, frameCount, progress }) {
       </div>
 
       <ol className="space-y-1 p-6" aria-label="Processing steps">
-        {STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const done = i < active
           const current = i === active
           return (

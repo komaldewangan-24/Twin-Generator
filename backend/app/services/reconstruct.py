@@ -83,8 +83,21 @@ def _quiet_colmap(pycolmap) -> None:
         pass
 
 
-def estimate_poses(frames: list[Path], work_dir: Path, progress: Progress):
-    """Run COLMAP SfM. Returns (pycolmap.Reconstruction, images_dir)."""
+def same_size(frames: list[Path]) -> bool:
+    """True when every frame has the same width and height (so one camera took them all)."""
+    sizes = set()
+    for f in frames:
+        img = cv2.imread(str(f))
+        if img is not None:
+            sizes.add(img.shape[:2])
+    return len(sizes) <= 1
+
+
+def estimate_poses(frames: list[Path], work_dir: Path, progress: Progress, single_camera: bool = True):
+    """Run COLMAP SfM. Returns (pycolmap.Reconstruction, images_dir).
+
+    `single_camera` is right for a video (one phone, one lens). Photos can come in mixed shapes (portrait
+    and landscape) or zooms, which one shared camera cannot describe, so each gets its own."""
     import pycolmap
 
     _quiet_colmap(pycolmap)
@@ -107,7 +120,7 @@ def estimate_poses(frames: list[Path], work_dir: Path, progress: Progress):
     pycolmap.extract_features(
         str(db_path),
         str(images_dir),
-        camera_mode=pycolmap.CameraMode.SINGLE,  # one phone, one lens
+        camera_mode=pycolmap.CameraMode.SINGLE if single_camera else pycolmap.CameraMode.PER_IMAGE,
     )
 
     progress("poses", 0.25, "Matching frames to each other")

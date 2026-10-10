@@ -11,6 +11,11 @@ def video_path_for(project_id: str) -> str:
     return str(project_dir(project_id) / "video.mp4")
 
 
+def photos_dir_for(project_id: str) -> str:
+    """The photos a scan was made from, when it was made from photos instead of a video."""
+    return str(settings.UPLOADS_DIR / project_id / "photos")
+
+
 def frames_dir_for(project_id: str) -> str:
     return str(project_dir(project_id) / "frames")
 

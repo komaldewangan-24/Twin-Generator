@@ -1,6 +1,6 @@
-"""The processing pipeline, run in the background after a video upload.
+"""The processing pipeline, run in the background after a video or photo upload.
 
-  EXTRACTING  frames from the video                       (ffmpeg)
+  EXTRACTING  frames from the video (ffmpeg) or the photos (Pillow)
   POSES       camera positions + sparse 3D points         (pycolmap / COLMAP)
   DETECTING   objects, placed in 3D and counted           (YOLO + spatial.py)
   TRAINING_3D photorealistic Gaussian splat for the viewer (Brush)
@@ -22,7 +22,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.project import Project, ProjectStatus
-from app.services import detector, extractor, preview, reconstruct, spatial, splat_convert, storage, structure
+from app.services import detector, extractor, photos, preview, reconstruct, spatial, splat_convert, storage, structure
 
 log = logging.getLogger("uvicorn.error")
 
@@ -87,8 +87,15 @@ def run_pipeline(project_id: str) -> None:
         frames_dir = storage.frames_dir_for(project_id)
 
         _set_status(project_id, ProjectStatus.EXTRACTING)
-        progress("extract", 0.0, "Extracting frames")
-        frame_count = extractor.extract_frames(storage.video_path_for(project_id), frames_dir)
+        with SessionLocal() as db:
+            row = db.query(Project).filter(Project.id == project_id).first()
+            from_photos = bool(row) and not row.video_path
+        if from_photos:
+            progress("extract", 0.0, "Preparing the photos")
+            frame_count = photos.prepare_photos(storage.photos_dir_for(project_id), frames_dir)
+        else:
+            progress("extract", 0.0, "Extracting frames")
+            frame_count = extractor.extract_frames(storage.video_path_for(project_id), frames_dir)
         preview_path = preview.make_contact_sheet(frames_dir, storage.preview_path_for(project_id))
 
         # ---- camera positions -------------------------------------------------
@@ -98,7 +105,7 @@ def run_pipeline(project_id: str) -> None:
         recon_error = None
         try:
             frames = reconstruct.select_frames(frames_dir)
-            recon, images_dir = reconstruct.estimate_poses(frames, work, progress)
+            recon, images_dir = reconstruct.estimate_poses(frames, work, progress, single_camera=not from_photos or reconstruct.same_size(frames))
             scene = spatial.build_scene(recon)
             try:
                 structure.write_points(recon, Path(storage.structure_path_for(project_id)))

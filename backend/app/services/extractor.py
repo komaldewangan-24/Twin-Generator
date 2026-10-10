@@ -6,6 +6,9 @@ from pathlib import Path
 
 FFMPEG = "ffmpeg"
 
+# Frames (from a video or from photos) are scaled so the SHORT side is this many pixels.
+FRAME_SHORT_SIDE = 720
+
 # How many frames the camera-path and 3D steps are given, about. Frames closer together link up more easily:
 # on the playroom sample the share of frames COLMAP could place in 3D was 2 of 28 with every 8th frame, 8 of 38
 # with every 6th, 54% with every 4th, 83% with every 3rd and 89% with every 2nd. A short phone clip is the same

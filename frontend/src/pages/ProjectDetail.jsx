@@ -104,12 +104,12 @@ export default function ProjectDetail() {
     })
   }
 
-  const uploadVideo = async (file) => {
-    if (!file) return
+  // A scan is made from one video or from a set of photos; both start the same processing.
+  const startFrom = async (send) => {
     setError('')
     setUploadProgress(0)
     try {
-      await uploadFile(`/projects/${id}/upload`, file, setUploadProgress)
+      await send()
       setObjects(null)
       setAnalytics(null)
       setShowReplace(false)
@@ -120,6 +120,14 @@ export default function ProjectDetail() {
       setUploadProgress(null)
     }
   }
+  const uploadVideo = (file) => file && startFrom(() => uploadFile(`/projects/${id}/upload`, file, setUploadProgress))
+  const uploadPhotos = (files) => files?.length && startFrom(() => {
+    const fd = new FormData()
+    files.forEach((f) => fd.append('files', f))
+    return api.post(`/projects/${id}/photos`, fd, {
+      onUploadProgress: (e) => e.total && setUploadProgress(Math.round((e.loaded / e.total) * 100)),
+    })
+  })
 
   const attachSplat = async (file) => {
     if (!file) return
@@ -252,9 +260,9 @@ export default function ProjectDetail() {
             <h1 className="mt-3 truncate text-4xl font-semibold sm:text-5xl">{project.name}</h1>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
-            {finished && project.has_video && (
+            {finished && (project.has_video || project.has_photos) && (
               <button className="btn btn-ghost" onClick={() => setShowReplace((v) => !v)}>
-                {showReplace ? 'Cancel' : 'Upload a new video'}
+                {showReplace ? 'Cancel' : 'Upload new video or photos'}
               </button>
             )}
             {finished && objects && (
@@ -272,7 +280,7 @@ export default function ProjectDetail() {
         <div className="mt-6"><TitleBlock items={stats} /></div>
 
         <div className="mt-6">
-          {processing && <ProcessingPanel status={project.status} frameCount={project.frame_count} progress={progress} />}
+          {processing && <ProcessingPanel status={project.status} frameCount={project.frame_count} progress={progress} fromPhotos={project.has_photos} />}
 
           {failed && (
             <div role="alert" className="mb-5 rounded-[3px] border border-fail/40 bg-fail-soft px-5 py-4">
@@ -282,7 +290,7 @@ export default function ProjectDetail() {
           )}
 
           {(needsVideo || showReplace) && (
-            <UploadPanel onUpload={uploadVideo} progress={uploadProgress} replacing={done} />
+            <UploadPanel onUpload={uploadVideo} onUploadPhotos={uploadPhotos} progress={uploadProgress} replacing={done} />
           )}
 
           {done && !showReplace && (

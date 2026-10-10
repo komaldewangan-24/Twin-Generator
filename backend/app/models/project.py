@@ -54,6 +54,12 @@ class Project(Base):
         return bool(self.video_path)
 
     @property
+    def has_photos(self) -> bool:
+        from app.core.config import settings
+
+        return (settings.UPLOADS_DIR / self.id / "photos").is_dir()
+
+    @property
     def has_preview(self) -> bool:
         return bool(self.preview_path)
 

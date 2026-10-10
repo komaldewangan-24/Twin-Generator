@@ -22,6 +22,7 @@ class ProjectResponse(BaseModel):
     scan_date: datetime
     frame_count: int | None = None
     has_video: bool = False
+    has_photos: bool = False
     has_preview: bool = False
     has_splat: bool = False
     has_structure: bool = False

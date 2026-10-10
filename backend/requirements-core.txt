@@ -12,6 +12,7 @@ aiofiles==24.1.0
 opencv-python-headless==4.10.0.84
 numpy==2.1.3
 pillow==11.1.0
+pillow-heif>=1.0       # reads iPhone HEIC photos (optional: without it, photos must be JPG, PNG or WebP)
 python-dotenv==1.0.1
 pytest==8.3.4
 httpx==0.28.1

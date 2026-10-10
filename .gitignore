@@ -68,3 +68,6 @@ Thumbs.db
 
 # ---------------- 3D tooling (downloaded binaries) ----------------
 backend/tools/
+
+# Browser-test tool output
+.playwright-mcp/

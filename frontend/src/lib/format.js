@@ -3,6 +3,7 @@ export function friendlyError(raw) {
   const msg = String(raw || '')
   if (!msg) return 'Processing failed. Upload the video again.'
   if (/interrupted/i.test(msg)) return 'Processing was interrupted by a server restart. Upload the video again.'
+  if (/photos?\b/i.test(msg)) return msg   // the server's message about photos already says what to do
   if (/ffmpeg/i.test(msg)) return 'The server could not read the video. Try an MP4 or MOV, or ask the admin to check that FFmpeg is installed.'
   if (/no frames extracted|valid video/i.test(msg)) return 'No frames could be read from this file. Is it a valid video?'
   if (/detection backend|onnx|torch/i.test(msg)) return 'The object detector is not set up on the server yet.'
@@ -19,7 +20,7 @@ export function formatDate(iso, opts = { year: 'numeric', month: 'short', day: '
 export const PROCESSING = ['UPLOADED', 'EXTRACTING', 'POSES', 'DETECTING', 'TRAINING_3D']
 
 export const STATUS_LABEL = {
-  CREATED: 'Waiting for video',
+  CREATED: 'Waiting for video or photos',
   UPLOADED: 'Queued',
   EXTRACTING: 'Extracting frames',
   POSES: 'Finding camera path',
