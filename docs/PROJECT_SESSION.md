@@ -482,7 +482,7 @@ none of this was checked against a hand count on other scenes.
 
 ## 11. Tests
 
-85 backend tests pass (the count grew 12 to 17 to 22 to 34 to 44 to 54 to 57 to 82 to 85 over the session).
+98 backend tests pass (the count grew 12 to 17 to 22 to 34 to 44 to 54 to 57 to 82 to 85 to 98 over the session).
 
 | File | Tests | Covers |
 |---|---|---|
@@ -731,3 +731,43 @@ room, and use the 1x camera.
 Downloads), so later experiments used the copy the app had stored. A test helper of mine deleted its own dataset
 because an experiment and its folder shared a name; I re-prepared it and renamed the run. `deregister_image` is not
 in this pycolmap version (`deregister_frame` is).
+
+---
+
+## 20. Photos instead of a video (10 October)
+
+You asked whether adding several photos of a place could also produce a 3D model, and then to build it. Answer: yes,
+the engine only needs overlapping pictures; the demo scan itself came from 224 photos. What was missing was the upload.
+
+**Built**
+- `POST /projects/{id}/photos` (multipart field `files`, repeated): 15 to 300 JPG, PNG, WebP or HEIC photos, 80 MB each,
+  2 GB in all. Refuses too few, too many, wrong types, another user's scan, and a scan that is still processing. File
+  names are made safe, so `../../evil.jpg` cannot leave the folder. A scan comes from one source: the latest upload
+  (video or photos) replaces the other. `has_photos` joins `has_video` on the project.
+- `services/photos.py`: applies the phone's rotation flag, scales to 720 px on the short side (also upwards, like video
+  frames: native-size small frames registered far worse in the earlier experiment), keeps the order of the file names
+  (IMG_2 before IMG_10), skips unreadable files and, if fewer than 15 remain, fails the scan saying how many and why.
+- Mixed shapes (portrait and landscape) get a camera each (COLMAP `PER_IMAGE`) instead of one shared camera. Checked on
+  70 photos of two shapes: 63 placed in 3D, and the trainer accepts the result.
+- HEIC via `pillow-heif` (added to the requirements; the doctor reports whether it is installed).
+- Interface: **Choose photos** and dropping several photos next to **Choose video**; a message before anything is sent
+  when fewer than 15 or an unsupported file is chosen; separate tips for photos; the processing screen and the status
+  pill say photos; the button to replace a scan now says "Upload new video or photos".
+- 13 new tests (98 in all): resizing, rotation flag, name order, unreadable files, HEIC, mixed shapes, the API rules
+  above, and the pipeline running from photos to DONE.
+
+**Verified in the real interface.** A browser driven with real files: 5 photos were refused on the page with "Choose at
+least 15 photos (you chose 5)"; 112 photos cut from the playroom footage uploaded and were processed end to end: 112
+frames, 99 placed in 3D, 11,431 3D points, depth information 28.7 degrees (a walk, so normal orbiting), room
+4.67 x 3.58 m (the video gave about 4.7 x 3.7), 587,436 splats (18.8 MB), 3 objects, photoreal model shown in the viewer.
+
+**Not verified.** A genuinely separate set of real photos (these came from video frames, so they are as sharp and as
+evenly spaced as a good set); HEIC from a real iPhone; photos taken at several zoom levels.
+
+**A mistake worth knowing about.** My first run of the 112 photos was marked failed ("interrupted by a server restart")
+because I edited a Python file while the dev server ran with `--reload`, which restarts it and ends the running job.
+I restarted the server without `--reload`, re-uploaded, and that is the run described above. Do the same when you
+process long scans during development.
+
+**Pulling your friend's changes.** `git fetch` found nothing new on `origin/main` (still `189be67`), so there was
+nothing to merge.
